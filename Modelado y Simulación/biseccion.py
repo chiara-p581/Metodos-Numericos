@@ -44,6 +44,12 @@ def biseccion(expr: str, a: float, b: float, tolerancia: float, max_iter: int):
     fa = _evaluar(expr, a)
     fb = _evaluar(expr, b)
 
+    # Verificar si algún extremo ya es raíz exacta
+    if fa == 0:
+        return a, [], "extremo_a"
+    if fb == 0:
+        return b, [], "extremo_b"
+
     if fa * fb >= 0:
         raise ValueError(
             f"Bolzano no se cumple: f({a:.4g})={fa:.4g}, f({b:.4g})={fb:.4g} "
@@ -226,19 +232,28 @@ class BiseccionFrame(tk.Frame):
             # Encabezado tabla
             self._log(f"  Bisección en f(x) = {expr}")
             self._log(f"  Intervalo: [{a}, {b}]  |  Tolerancia: {tol}\n")
-            self._log(f"{'Iter':<6} | {'Centro c':<14} | {'f(c)':<16} | {'Error Est.'}")
-            self._log("─" * 58)
 
-            for r in historial:
-                self._log(f"{r['i']:<6} | {r['c']:<14.8f} | {r['fc']:<16.6e} | {r['error']:.6e}")
-
-            self._log("─" * 58)
-            if estado == "max_iter":
-                self._log("⚠  Máximas iteraciones alcanzadas sin convergencia.")
+            # Caso especial: raíz en extremo del intervalo
+            if estado in ("extremo_a", "extremo_b"):
+                extremo = "a" if estado == "extremo_a" else "b"
+                self._log(f"  ℹ  f({extremo}) = 0  →  el extremo {extremo} ya es raíz exacta.")
+                self._log(f"  No se requieren iteraciones.\n")
+                self._log("─" * 58)
+                self._log(f"✔  Raíz exacta en {extremo} = {raiz:.10f}")
             else:
-                self._log(f"✔  Raíz aproximada : {raiz:.10f}")
-                self._log(f"   Error final     : {historial[-1]['error']:.2e}")
-                self._log(f"   Iteraciones     : {len(historial)}")
+                self._log(f"{'Iter':<6} | {'Centro c':<14} | {'f(c)':<16} | {'Error Est.'}")
+                self._log("─" * 58)
+
+                for r in historial:
+                    self._log(f"{r['i']:<6} | {r['c']:<14.8f} | {r['fc']:<16.6e} | {r['error']:.6e}")
+
+                self._log("─" * 58)
+                if estado == "max_iter":
+                    self._log("⚠  Máximas iteraciones alcanzadas sin convergencia.")
+                else:
+                    self._log(f"✔  Raíz aproximada : {raiz:.10f}")
+                    self._log(f"   Error final     : {historial[-1]['error']:.2e}")
+                    self._log(f"   Iteraciones     : {len(historial)}")
 
             self._graficar()
 
