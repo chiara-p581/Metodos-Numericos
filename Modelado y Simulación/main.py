@@ -1,95 +1,140 @@
 """
 Aplicación: Buscador de Raíces Numéricas
 =========================================
-Módulos disponibles:
-  - Bisección    (biseccion.py)
-  - Punto Fijo   (punto_fijo.py)
-  - Aitken       (aitken.py)
- 
+Módulos:
+  - Bisección       (biseccion.py  → BiseccionApp)
+  - Punto Fijo      (punto_fijo.py → PuntoFijoApp)
+  - Aitken Δ²       (aitken.py     → AitkenApp)
+  - Newton-Raphson  (newton.py     → NewtonApp)
+
 Uso:
     python main.py
 """
- 
+
 import tkinter as tk
 from tkinter import ttk
- 
-from biseccion import BiseccionFrame
-from punto_fijo import PuntoFijoFrame
-from aitken import AitkenFrame  
- 
- 
+
+from biseccion  import BiseccionApp
+from punto_fijo import PuntoFijoApp
+from aitken     import AitkenApp
+from newton     import NewtonApp
+
+
+# ══════════════════════════════════════
+# PALETA — compartida con los módulos
+# ══════════════════════════════════════
+BG     = "#0d1117"
+BG2    = "#161b22"
+BG3    = "#1c2128"
+BORDER = "#30363d"
+TEXT   = "#e6edf3"
+MUTED  = "#8b949e"
+ACCENT = "#58a6ff"
+
+
+# ══════════════════════════════════════
+# APLICACIÓN PRINCIPAL
+# ══════════════════════════════════════
 class RootFinderApp:
-    """Ventana principal que aloja los métodos numéricos en pestañas."""
- 
-    APP_TITLE  = "Buscador de Raíces Numéricas"
-    WIN_SIZE   = "1200x700"
-    FONT_TAB   = ("Segoe UI", 11, "bold")
- 
+
+    APP_TITLE = "Métodos Numéricos — Búsqueda de Raíces"
+    WIN_SIZE  = "1280x740"
+
+    METHODS = [
+        ("  Bisección  ",      BiseccionApp),
+        ("  Punto Fijo  ",     PuntoFijoApp),
+        ("  Aitken Δ²  ",      AitkenApp),
+        ("  Newton-Raphson  ", NewtonApp),
+    ]
+
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(self.APP_TITLE)
         self.root.geometry(self.WIN_SIZE)
         self.root.resizable(True, True)
+        self.root.configure(bg=BG)
+
         self._apply_theme()
         self._build_ui()
- 
+
+    # ──────────── TEMA ────────────
     def _apply_theme(self):
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure(
-            "TNotebook",
-            background="#ECEFF1",
-            borderwidth=0
-        )
-        style.configure(
-            "TNotebook.Tab",
-            font=self.FONT_TAB,
-            padding=[18, 8],
-            background="#CFD8DC",
-            foreground="#37474F"
-        )
-        style.map(
-            "TNotebook.Tab",
-            background=[("selected", "#1A237E")],
-            foreground=[("selected", "white")]
-        )
- 
+
+        # notebook vacío (sin pestañas propias de ttk —
+        # usamos nuestra tab bar personalizada)
+        style.configure("Dark.TNotebook",
+                        background=BG,
+                        borderwidth=0,
+                        tabmargins=0)
+        style.configure("Dark.TNotebook.Tab",
+                        background=BG2,
+                        foreground=MUTED,
+                        font=("Segoe UI", 10, "bold"),
+                        padding=[20, 9],
+                        borderwidth=0,
+                        focuscolor=BG)
+        style.map("Dark.TNotebook.Tab",
+                  background=[("selected", BG3),
+                               ("active",   BG3)],
+                  foreground=[("selected", TEXT),
+                               ("active",   TEXT)])
+        style.layout("Dark.TNotebook.Tab", [
+            ("Notebook.tab", {
+                "sticky": "nswe",
+                "children": [("Notebook.padding", {
+                    "side": "top",
+                    "sticky": "nswe",
+                    "children": [("Notebook.label", {"sticky": ""})]
+                })]
+            })
+        ])
+
+    # ──────────── UI ────────────
     def _build_ui(self):
-        # Barra superior
-        header = tk.Frame(self.root, bg="#1A237E", height=48)
-        header.pack(fill=tk.X)
-        header.pack_propagate(False)
- 
-        tk.Label(
-            header,
-            text="⚙ Métodos Numéricos — Búsqueda de Raíces",
-            font=("Segoe UI", 14, "bold"),
-            bg="#1A237E", fg="white"
-        ).pack(side=tk.LEFT, padx=18, pady=10)
- 
-        # Notebook (pestañas)
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
- 
-        # Tabs
-        tab_biseccion  = tk.Frame(notebook, bg="white")
-        tab_punto_fijo = tk.Frame(notebook, bg="white")
-        tab_aitken     = tk.Frame(notebook, bg="white")  # 👈 NUEVO
- 
-        notebook.add(tab_biseccion,  text="  Bisección  ")
-        notebook.add(tab_punto_fijo, text="  Punto Fijo  ")
-        notebook.add(tab_aitken,     text="  Aitken  ")   # 👈 NUEVO
- 
-        # Frames
-        BiseccionFrame(tab_biseccion).pack(fill=tk.BOTH, expand=True)
-        PuntoFijoFrame(tab_punto_fijo).pack(fill=tk.BOTH, expand=True)
-        AitkenFrame(tab_aitken).pack(fill=tk.BOTH, expand=True)  # 👈 NUEVO
- 
+        self._topbar()
+        self._notebook()
+
+    def _topbar(self):
+        bar = tk.Frame(self.root, bg=BG2, height=50)
+        bar.pack(fill=tk.X)
+        bar.pack_propagate(False)
+
+        # borde inferior
+        sep = tk.Frame(self.root, bg=BORDER, height=1)
+        sep.pack(fill=tk.X)
+
+        tk.Label(bar,
+                 text="⚙  Métodos Numéricos — Búsqueda de Raíces",
+                 font=("Segoe UI", 13, "bold"),
+                 bg=BG2, fg=TEXT).pack(side=tk.LEFT, padx=20)
+
+        tk.Label(bar,
+                 text="bisección  ·  punto fijo  ·  aitken  ·  newton",
+                 font=("Segoe UI", 9),
+                 bg=BG2, fg=MUTED).pack(side=tk.RIGHT, padx=20)
+
+    def _notebook(self):
+        nb = ttk.Notebook(self.root, style="Dark.TNotebook")
+        nb.pack(fill=tk.BOTH, expand=True)
+
+        for label, AppClass in self.METHODS:
+            tab = tk.Frame(nb, bg=BG)
+            nb.add(tab, text=label)
+
+            # standalone=False → no reconfigura la ventana raíz
+            instance = AppClass(tab, standalone=False)
+            instance.pack(fill=tk.BOTH, expand=True)
+
+    # ──────────── RUN ────────────
     def run(self):
         self.root.mainloop()
- 
- 
+
+
+# ══════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════
 if __name__ == "__main__":
     app = RootFinderApp()
     app.run()
- 

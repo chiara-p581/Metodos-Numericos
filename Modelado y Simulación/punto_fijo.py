@@ -1,628 +1,647 @@
-"""
-Módulo: Método de Punto Fijo
-Busca raíces de f(x) iterando x_{n+1} = g(x_n) hasta convergencia.
-
-Incluye sugerencia automática de funciones g(x) válidas (|g'(x)| < 1)
-usando la API de Anthropic.
-"""
-
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import ttk, messagebox
 import math
-import json
-import urllib.request
-import threading
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 
-# ─────────────────────────────────────────────
-#  HELPERS DE EVALUACIÓN
-# ─────────────────────────────────────────────
-
-def _entorno_base():
-    env = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
-    env.update({
-        "np": np,
-        "sin": np.sin, "cos": np.cos, "tan": np.tan,
-        "exp": np.exp, "log": np.log, "sqrt": np.sqrt,
-        "abs": np.abs,
-    })
-    return env
-
-
-def _evaluar(expr: str, x_val) -> float:
-    env = _entorno_base()
-    env["x"] = x_val
-    return eval(expr, {"__builtins__": {}}, env)
+# ══════════════════════════════════════
+# PALETA — dark terminal
+# ══════════════════════════════════════
+BG      = "#0d1117"
+BG2     = "#161b22"
+BG3     = "#1c2128"
+BORDER  = "#30363d"
+TEXT    = "#e6edf3"
+MUTED   = "#8b949e"
+ACCENT  = "#58a6ff"
+GREEN   = "#3fb950"
+RED     = "#f85149"
+YELLOW  = "#d29922"
+PURPLE  = "#bc8cff"
+ORANGE  = "#f0883e"
 
 
-def _evaluar_escalar(expr: str) -> float:
-    env = _entorno_base()
-    return float(eval(str(expr), {"__builtins__": {}}, env))
+# ══════════════════════════════════════
+# LÓGICA — PUNTO FIJO
+# ══════════════════════════════════════
+def _env(x):
+    e = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
+    e["np"] = np
+    e["x"]  = x
+    return e
 
+def evaluar(expr, x):
+    return eval(expr, {"__builtins__": {}}, _env(x))
 
-# ─────────────────────────────────────────────
-#  VALIDACIÓN |g'(x)| < 1
-# ─────────────────────────────────────────────
+def derivada_num(expr, x):
+    h = 1e-7
+    return (evaluar(expr, x + h) - evaluar(expr, x - h)) / (2 * h)
 
-def _derivada_numerica(expr_g: str, x: float, h: float = 1e-7) -> float:
-    """Derivada centrada de g en x."""
-    return (float(_evaluar(expr_g, x + h)) - float(_evaluar(expr_g, x - h))) / (2 * h)
-
-
-def validar_convergencia(expr_g: str, x0: float, radio: float = 0.5, n_puntos: int = 40):
-    """
-    Verifica |g'(x)| < 1 en un entorno de x0.
-    Devuelve (es_valida: bool, max_deriv: float, x_max: float).
-    """
-    xs = np.linspace(x0 - radio, x0 + radio, n_puntos)
-    max_d, x_max = 0.0, x0
-    for xv in xs:
-        try:
-            d = abs(_derivada_numerica(expr_g, float(xv)))
-            if d > max_d:
-                max_d = d
-                x_max = float(xv)
-        except Exception:
-            pass
-    return max_d < 1.0, max_d, x_max
-
-
-# ─────────────────────────────────────────────
-#  LÓGICA NUMÉRICA (pura, sin GUI)
-# ─────────────────────────────────────────────
-
-def punto_fijo(expr_f: str, expr_g: str, x0: float, tolerancia: float, max_iter: int):
-    """
-    Ejecuta el método de Punto Fijo.
-
-    Returns
-    -------
-    raiz        : float
-    iteraciones : list[dict]  — cada dict: {i, x, fx, error}
-    estado      : str         — "convergencia" | "max_iter"
-    """
-    iteraciones = []
-    x_n = x0
+def punto_fijo(fexpr, gexpr, x0, tol, max_iter):
+    hist = []
+    x    = x0
 
     for i in range(1, max_iter + 1):
-        x_next = float(_evaluar(expr_g, x_n))
-        error = abs(x_next - x_n)
-
-        try:
-            fx = float(_evaluar(expr_f, x_next))
-        except Exception:
-            fx = float("nan")
-
-        iteraciones.append({"i": i, "x": x_next, "fx": fx, "error": error})
-        x_n = x_next
-
-        if error < tolerancia:
-            return x_n, iteraciones, "convergencia"
-
-    return x_n, iteraciones, "max_iter"
-
-
-# ─────────────────────────────────────────────
-#  SUGERENCIAS VÍA API ANTHROPIC
-# ─────────────────────────────────────────────
-
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-
-_SYSTEM_PROMPT = """Eres un asistente de métodos numéricos.
-El usuario te da una función f(x) en sintaxis Python/numpy.
-Tu tarea: proponer exactamente 3 formas distintas de despejar x = g(x) a partir de f(x) = 0,
-de modo que el método de Punto Fijo pueda converger (idealmente |g'(x)| < 1 cerca de la raíz).
-
-Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin bloques de código, sin backticks.
-Formato exacto:
-{
-  "candidatas": [
-    {"expr": "<expresión Python>", "descripcion": "<cómo se obtuvo>"},
-    {"expr": "<expresión Python>", "descripcion": "<cómo se obtuvo>"},
-    {"expr": "<expresión Python>", "descripcion": "<cómo se obtuvo>"}
-  ]
-}
-
-Reglas para las expresiones:
-- Usar sintaxis Python válida (** para potencia, np.exp, np.log, np.sqrt, np.sin, np.cos)
-- La variable es siempre x
-- No incluir "g(x) =" ni "x =", solo la expresión del lado derecho
-- Variar los despejes: algebraico, con exponencial, con raíz, etc. según corresponda
-"""
-
-
-def _llamar_api(expr_f: str) -> list:
-    """
-    Llama a la API de Anthropic y devuelve lista de candidatas.
-    Lanza excepción si hay error.
-    """
-    payload = json.dumps({
-        "model": "claude-sonnet-4-20250514",
-        "max_tokens": 1000,
-        "system": _SYSTEM_PROMPT,
-        "messages": [
-            {"role": "user", "content": f"f(x) = {expr_f}"}
-        ]
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        ANTHROPIC_API_URL,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST"
-    )
-
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-
-    raw = "".join(
-        blk.get("text", "") for blk in data.get("content", [])
-        if blk.get("type") == "text"
-    ).strip()
-
-    # Limpiar posibles backticks residuales
-    raw = raw.replace("```json", "").replace("```", "").strip()
-
-    parsed = json.loads(raw)
-    return parsed["candidatas"]
-
-
-# ─────────────────────────────────────────────
-#  VENTANA DE SUGERENCIAS
-# ─────────────────────────────────────────────
-
-class _VentanaSugerencias(tk.Toplevel):
-    """
-    Popup que muestra las candidatas g(x) con su validación |g'(x)| < 1
-    y permite seleccionar una para cargarla en el campo principal.
-    """
-
-    def __init__(self, master, candidatas, x0: float, callback):
-        super().__init__(master)
-        self.title("Sugerencias de g(x)")
-        self.geometry("640x440")
-        self.resizable(False, False)
-        self.grab_set()  # modal
-        self.configure(bg="#F3F0FF")
-
-        self._callback = callback
-        self._seleccion = tk.StringVar()
-
-        # Título
-        tk.Label(
-            self, text="Candidatas g(x) sugeridas por IA",
-            font=("Segoe UI", 12, "bold"), bg="#F3F0FF", fg="#1A237E"
-        ).pack(pady=(14, 4), padx=16, anchor="w")
-
-        tk.Label(
-            self,
-            text=f"Validación numérica de |g'(x)| evaluada en entorno de x₀ = {x0:.4g}",
-            font=("Segoe UI", 9), bg="#F3F0FF", fg="#555"
-        ).pack(padx=16, anchor="w")
-
-        # Frame con las opciones
-        frame_opts = tk.Frame(self, bg="#F3F0FF")
-        frame_opts.pack(fill=tk.BOTH, expand=True, padx=16, pady=10)
-
-        self._poblar(frame_opts, candidatas, x0)
-
-        # Botones
-        frame_btn = tk.Frame(self, bg="#F3F0FF")
-        frame_btn.pack(fill=tk.X, padx=16, pady=(0, 14))
-
-        tk.Button(
-            frame_btn, text="✔  Usar seleccionada",
-            bg="#4527A0", fg="white",
-            font=("Segoe UI", 10, "bold"),
-            relief=tk.FLAT, padx=10, pady=6,
-            command=self._usar
-        ).pack(side=tk.LEFT, padx=(0, 8))
-
-        tk.Button(
-            frame_btn, text="Cancelar",
-            bg="#757575", fg="white",
-            font=("Segoe UI", 10),
-            relief=tk.FLAT, padx=10, pady=6,
-            command=self.destroy
-        ).pack(side=tk.LEFT)
-
-    def _poblar(self, parent, candidatas, x0):
-        for c in candidatas:
-            expr = c.get("expr", "")
-            desc = c.get("descripcion", "")
-
-            # Validar convergencia numéricamente
-            try:
-                valida, max_d, x_max = validar_convergencia(expr, x0)
-                if valida:
-                    badge_txt   = f"✔  |g'(x)| ≤ {max_d:.3f}  →  CONVERGE"
-                    badge_color = "#1B5E20"
-                    badge_bg    = "#E8F5E9"
-                else:
-                    badge_txt   = f"✘  |g'(x)| = {max_d:.3f} en x ≈ {x_max:.3f}  →  PUEDE DIVERGIR"
-                    badge_color = "#B71C1C"
-                    badge_bg    = "#FFEBEE"
-            except Exception:
-                badge_txt   = "⚠  No se pudo validar"
-                badge_color = "#E65100"
-                badge_bg    = "#FFF3E0"
-
-            # Card de la candidata
-            card = tk.Frame(parent, bg="white", relief=tk.RIDGE, bd=1)
-            card.pack(fill=tk.X, pady=5)
-
-            row_top = tk.Frame(card, bg="white")
-            row_top.pack(fill=tk.X, padx=10, pady=(8, 2))
-
-            tk.Radiobutton(
-                row_top, variable=self._seleccion, value=expr,
-                bg="white", activebackground="white"
-            ).pack(side=tk.LEFT)
-
-            tk.Label(
-                row_top, text=f"g(x) = {expr}",
-                font=("Consolas", 10, "bold"), bg="white", fg="#1A237E"
-            ).pack(side=tk.LEFT, padx=4)
-
-            tk.Label(
-                card, text=badge_txt,
-                font=("Segoe UI", 9), bg=badge_bg, fg=badge_color,
-                padx=8, pady=2
-            ).pack(anchor="w", padx=10, pady=(0, 2))
-
-            tk.Label(
-                card, text=desc,
-                font=("Segoe UI", 9), bg="white", fg="#555",
-                wraplength=580, justify=tk.LEFT
-            ).pack(anchor="w", padx=10, pady=(0, 8))
-
-    def _usar(self):
-        sel = self._seleccion.get()
-        if not sel:
-            messagebox.showwarning("Aviso", "Seleccioná una opción primero.", parent=self)
-            return
-        self._callback(sel)
-        self.destroy()
-
-
-# ─────────────────────────────────────────────
-#  CLASE GUI PRINCIPAL
-# ─────────────────────────────────────────────
-
-class PuntoFijoFrame(tk.Frame):
-    """
-    Panel completo del Método de Punto Fijo.
-    Se puede embeber en cualquier ventana Tkinter.
-    """
-
-    FONT_MONO         = ("Consolas", 9)
-    FONT_LABEL        = ("Segoe UI", 10)
-    COLOR_BTN_CALC    = "#4527A0"
-    COLOR_BTN_GRAPH   = "#00695C"
-    COLOR_BTN_SUGGEST = "#E65100"
-
-    def __init__(self, master, **kwargs):
-        super().__init__(master, **kwargs)
-        self._raiz = None
-        self._historial = []
-        self._build_ui()
-
-    # ── Construcción de la interfaz ──────────────────────────────────────────
-
-    def _build_ui(self):
-        panel_ctrl = tk.Frame(self, padx=12, pady=12, bg="#F3F0FF")
-        panel_ctrl.pack(side=tk.LEFT, fill=tk.Y)
-
-        panel_graf = tk.Frame(self)
-        panel_graf.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-
-        self._build_controles(panel_ctrl)
-        self._build_grafico(panel_graf)
-
-    def _lbl(self, parent, texto, pady_top=8):
-        tk.Label(
-            parent, text=texto, anchor="w",
-            bg="#F3F0FF", font=self.FONT_LABEL
-        ).pack(anchor="w", pady=(pady_top, 0))
-
-    def _entry(self, parent, default):
-        e = tk.Entry(parent, width=32, font=self.FONT_LABEL)
-        e.insert(0, default)
-        e.pack(pady=2)
-        return e
-
-    def _build_controles(self, parent):
-        parent.config(bg="#F3F0FF")
-
-        tk.Label(
-            parent, text="Método de Punto Fijo",
-            font=("Segoe UI", 13, "bold"), bg="#F3F0FF", fg="#1A237E"
-        ).pack(anchor="w", pady=(0, 10))
-
-        # f(x) + botón sugerir en la misma fila
-        self._lbl(parent, "Función original f(x):", pady_top=0)
-        frame_f = tk.Frame(parent, bg="#F3F0FF")
-        frame_f.pack(fill=tk.X, pady=2)
-
-        self.e_f = tk.Entry(frame_f, width=23, font=self.FONT_LABEL)
-        self.e_f.insert(0, "2**(-x) - x")
-        self.e_f.pack(side=tk.LEFT)
-
-        self._btn_sugerir = tk.Button(
-            frame_f, text="✨ Sugerir g(x)",
-            bg=self.COLOR_BTN_SUGGEST, fg="white",
-            font=("Segoe UI", 9, "bold"),
-            relief=tk.FLAT, padx=8, pady=3,
-            command=self._sugerir_g
-        )
-        self._btn_sugerir.pack(side=tk.LEFT, padx=(6, 0))
-
-        # g(x)
-        self._lbl(parent, "Función iterativa g(x)  [x = g(x)]:")
-        self.e_g = self._entry(parent, "2**(-x)")
-
-        # Indicador de validez en tiempo real
-        self._lbl_validez = tk.Label(
-            parent, text="", bg="#F3F0FF",
-            font=("Segoe UI", 8, "italic"), anchor="w"
-        )
-        self._lbl_validez.pack(anchor="w")
-        self.e_g.bind("<FocusOut>", lambda e: self._actualizar_validez())
-        self.e_g.bind("<Return>",   lambda e: self._actualizar_validez())
-
-        self._lbl(parent, "Punto inicial x₀:")
-        self.e_x0 = self._entry(parent, "2/3")
-        self.e_x0.bind("<FocusOut>", lambda e: self._actualizar_validez())
-
-        self._lbl(parent, "Tolerancia (error):")
-        self.e_tol = self._entry(parent, "1e-6")
-
-        self._lbl(parent, "Máx. iteraciones:")
-        self.e_iter = self._entry(parent, "100")
-
-        # Botones principales
-        frame_btn = tk.Frame(parent, bg="#F3F0FF")
-        frame_btn.pack(fill=tk.X, pady=14)
-
-        tk.Button(
-            frame_btn, text="▶  Calcular raíz",
-            bg=self.COLOR_BTN_CALC, fg="white",
-            font=("Segoe UI", 10, "bold"),
-            relief=tk.FLAT, padx=10, pady=6,
-            command=self._calcular
-        ).pack(side=tk.LEFT, padx=(0, 6))
-
-        tk.Button(
-            frame_btn, text="📈  Ver gráfica",
-            bg=self.COLOR_BTN_GRAPH, fg="white",
-            font=("Segoe UI", 10, "bold"),
-            relief=tk.FLAT, padx=10, pady=6,
-            command=self._graficar
-        ).pack(side=tk.LEFT)
-
-        # Consola
-        tk.Label(
-            parent, text="Tabla de iteraciones:",
-            bg="#F3F0FF", font=self.FONT_LABEL
-        ).pack(anchor="w", pady=(6, 2))
-
-        frame_txt = tk.Frame(parent)
-        frame_txt.pack(fill=tk.BOTH, expand=True)
-
-        scroll = tk.Scrollbar(frame_txt)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.txt = tk.Text(
-            frame_txt, height=18, width=58,
-            font=self.FONT_MONO,
-            yscrollcommand=scroll.set,
-            bg="#1E1E1E", fg="#D4D4D4",
-            insertbackground="white"
-        )
-        self.txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.config(command=self.txt.yview)
-
-    def _build_grafico(self, parent):
-        self.fig = Figure(figsize=(7, 6), dpi=100)
-        self.ax = self.fig.add_subplot(111)
-        self.canvas = FigureCanvasTkAgg(self.fig, master=parent)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        self._ax_placeholder()
-
-    def _ax_placeholder(self):
-        self.ax.clear()
-        self.ax.text(
-            0.5, 0.5,
-            "Ingresá los datos y presioná\n'Calcular raíz' o 'Ver gráfica'",
-            ha="center", va="center", fontsize=12,
-            color="#888", transform=self.ax.transAxes
-        )
-        self.ax.set_xticks([])
-        self.ax.set_yticks([])
-        self.canvas.draw()
-
-    # ── Validez en tiempo real ───────────────────────────────────────────────
-
-    def _actualizar_validez(self):
-        expr_g = self.e_g.get().strip()
-        if not expr_g:
-            self._lbl_validez.config(text="")
-            return
-        try:
-            x0 = _evaluar_escalar(self.e_x0.get())
-            valida, max_d, _ = validar_convergencia(expr_g, x0)
-            if valida:
-                self._lbl_validez.config(
-                    text=f"✔ |g'(x)| ≤ {max_d:.3f} cerca de x₀  → converge",
-                    fg="#1B5E20"
-                )
+        fx   = evaluar(fexpr, x)
+        xnew = evaluar(gexpr, x)
+        err  = abs(xnew - x)
+
+        hist.append({"i": i, "xn": x, "xn1": xnew,
+                     "fx": fx, "gx": xnew, "error": err})
+
+        if err < tol:
+            return xnew, hist, True
+        x = xnew
+
+    return x, hist, False
+
+def analisis_punto_fijo(hist, raiz, tol, fexpr, gexpr, x0):
+    errores = [r["error"] for r in hist if r["error"] > 0]
+    ratios  = [errores[i]/errores[i-1] for i in range(1, len(errores))
+               if errores[i-1] != 0]
+    factor  = sum(ratios)/len(ratios) if ratios else 0
+    tipo    = "rápida" if factor < 0.1 else ("moderada" if factor < 0.5 else "lenta")
+    ue      = errores[-1] if errores else 0
+    fval    = evaluar(fexpr, raiz)
+
+    try:
+        gp = abs(derivada_num(gexpr, x0))
+        if gp < 1:
+            conv_txt = f"|g'(x₀)| ≈ {gp:.4f} < 1  →  converge"
+            conv_ok  = True
+        else:
+            conv_txt = f"|g'(x₀)| ≈ {gp:.4f} ≥ 1  →  puede diverger"
+            conv_ok  = False
+    except Exception:
+        conv_txt = "No se pudo evaluar g'(x₀)"
+        conv_ok  = None
+
+    return {
+        "iters":    len(hist),
+        "raiz":     raiz,
+        "fval":     fval,
+        "ue":       ue,
+        "factor":   factor,
+        "tipo":     tipo,
+        "tol":      tol,
+        "ok":       ue < tol,
+        "conv_txt": conv_txt,
+        "conv_ok":  conv_ok,
+    }
+
+def sugerencias_g(fexpr):
+    return [
+        (f"x - 0.5*({fexpr})",  "Relajación media"),
+        (f"x - 0.1*({fexpr})",  "Relajación suave"),
+        (f"x - 0.01*({fexpr})", "Relajación muy suave"),
+    ]
+
+
+# ══════════════════════════════════════
+# WIDGET HELPERS
+# ══════════════════════════════════════
+def _labeled_entry(parent, label, default, bg=BG2):
+    tk.Label(parent, text=label, bg=bg, fg=MUTED,
+             font=("JetBrains Mono", 8)).pack(anchor="w")
+    e = tk.Entry(parent, bg=BG3, fg=TEXT, insertbackground=TEXT,
+                 font=("JetBrains Mono", 10), bd=0,
+                 highlightthickness=1, highlightbackground=BORDER,
+                 highlightcolor=ACCENT, relief="flat")
+    e.insert(0, default)
+    e.pack(fill=tk.X, ipady=5, pady=(2, 8))
+    return e
+
+def _btn(parent, text, cmd, color=ACCENT, fg="#000000"):
+    b = tk.Label(parent, text=text, bg=color, fg=fg,
+                 font=("Segoe UI", 10, "bold"),
+                 padx=12, pady=7, cursor="hand2")
+    b.bind("<Button-1>", lambda e: cmd())
+    b.bind("<Enter>",    lambda e: b.config(bg=_darken(color)))
+    b.bind("<Leave>",    lambda e: b.config(bg=color))
+    return b
+
+def _darken(hex_color):
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    return "#{:02x}{:02x}{:02x}".format(
+        max(0, int(r*0.8)), max(0, int(g*0.8)), max(0, int(b*0.8)))
+
+
+# ══════════════════════════════════════
+# CLASE PRINCIPAL — PUNTO FIJO
+# ══════════════════════════════════════
+class PuntoFijoApp(tk.Frame):
+
+    TABS = [
+        ("📉", "Convergencia"),
+        ("📊", "Función f(x)"),
+        ("🗂",  "Tabla"),
+        ("🔍", "Paso a paso"),
+        ("🧠", "Análisis"),
+    ]
+
+    def __init__(self, master=None, standalone=True):
+        super().__init__(master, bg=BG)
+
+        if standalone:
+            master.title("Punto Fijo — Métodos Numéricos")
+            master.configure(bg=BG)
+            master.geometry("1200x700")
+            master.minsize(900, 580)
+
+        self._hist  = []
+        self._raiz  = None
+        self._fexpr = ""
+        self._gexpr = ""
+
+        self._build()
+
+    # ──────────── LAYOUT ────────────
+    def _build(self):
+        self._topbar()
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill=tk.BOTH, expand=True)
+        self._sidebar(body)
+        self._main_area(body)
+
+    def _topbar(self):
+        bar = tk.Frame(self, bg=BG2, height=44)
+        bar.pack(fill=tk.X)
+        bar.pack_propagate(False)
+        tk.Label(bar, text="⚙  Punto Fijo", bg=BG2, fg=TEXT,
+                 font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT, padx=16)
+        tk.Label(bar, text="Método de Punto Fijo  |  x = g(x)", bg=BG2, fg=MUTED,
+                 font=("Segoe UI", 9)).pack(side=tk.RIGHT, padx=16)
+
+    def _sidebar(self, parent):
+        sb = tk.Frame(parent, bg=BG2, width=280)
+        sb.pack(side=tk.LEFT, fill=tk.Y)
+        sb.pack_propagate(False)
+
+        inner = tk.Frame(sb, bg=BG2)
+        inner.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
+
+        tk.Label(inner, text="PARÁMETROS", bg=BG2, fg=MUTED,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 8))
+
+        self.e_f   = _labeled_entry(inner, "f(x)",           "2**(-x) - x")
+
+        # g(x) con botón sugerir
+        tk.Label(inner, text="g(x)  — función de iteración",
+                 bg=BG2, fg=MUTED, font=("JetBrains Mono", 8)).pack(anchor="w")
+        g_row = tk.Frame(inner, bg=BG2)
+        g_row.pack(fill=tk.X, pady=(2, 8))
+
+        self.e_g = tk.Entry(g_row, bg=BG3, fg=TEXT, insertbackground=TEXT,
+                            font=("JetBrains Mono", 10), bd=0,
+                            highlightthickness=1, highlightbackground=BORDER,
+                            highlightcolor=ACCENT, relief="flat")
+        self.e_g.insert(0, "2**(-x)")
+        self.e_g.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5)
+
+        sug_btn = tk.Label(g_row, text=" ✨ ", bg=BG3, fg=MUTED,
+                           font=("Segoe UI", 11), cursor="hand2",
+                           highlightthickness=1, highlightbackground=BORDER)
+        sug_btn.pack(side=tk.LEFT, padx=(4, 0), ipady=4)
+        sug_btn.bind("<Button-1>", self._show_suggest)
+        sug_btn.bind("<Enter>",    lambda e: sug_btn.config(fg=PURPLE))
+        sug_btn.bind("<Leave>",    lambda e: sug_btn.config(fg=MUTED))
+
+        self.e_x0  = _labeled_entry(inner, "x₀  (punto inicial)", "0.5")
+        self.e_tol = _labeled_entry(inner, "Tolerancia",           "1e-6")
+        self.e_it  = _labeled_entry(inner, "Max iteraciones",      "100")
+
+        tk.Frame(inner, bg=BORDER, height=1).pack(fill=tk.X, pady=8)
+
+        _btn(inner, "▶  Calcular", self._calcular).pack(fill=tk.X, pady=3)
+        _btn(inner, "📈  Graficar f(x) y g(x)", self._graficar,
+             color=BG3, fg=ACCENT).pack(fill=tk.X, pady=3)
+
+    def _main_area(self, parent):
+        right = tk.Frame(parent, bg=BG)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._tab_bar = tk.Frame(right, bg=BG2, height=40)
+        self._tab_bar.pack(fill=tk.X)
+        self._tab_bar.pack_propagate(False)
+
+        self._tab_btns   = {}
+        self._tab_frames = {}
+
+        for icon, name in self.TABS:
+            b = tk.Label(self._tab_bar, text=f"{icon} {name}",
+                         bg=BG2, fg=MUTED,
+                         font=("Segoe UI", 10),
+                         padx=14, pady=10, cursor="hand2")
+            b.pack(side=tk.LEFT)
+            b.bind("<Button-1>", lambda e, n=name: self._show_tab(n))
+            self._tab_btns[name] = b
+
+        self._panels = tk.Frame(right, bg=BG)
+        self._panels.pack(fill=tk.BOTH, expand=True)
+
+        self._build_panel_conv()
+        self._build_panel_func()
+        self._build_panel_tabla()
+        self._build_panel_steps()
+        self._build_panel_analisis()
+
+        self._show_tab("Paso a paso")
+
+    # ──────────── TAB SWITCHING ────────────
+    def _show_tab(self, name):
+        for n, b in self._tab_btns.items():
+            b.config(fg=TEXT if n == name else MUTED)
+        for n, f in self._tab_frames.items():
+            if n == name:
+                f.pack(fill=tk.BOTH, expand=True)
             else:
-                self._lbl_validez.config(
-                    text=f"✘ |g'(x)| = {max_d:.3f} cerca de x₀  → puede divergir",
-                    fg="#B71C1C"
-                )
-        except Exception:
-            self._lbl_validez.config(text="⚠ No se pudo validar g(x)", fg="#E65100")
+                f.pack_forget()
 
-    # ── Sugerencias IA ───────────────────────────────────────────────────────
+    def _panel(self, name):
+        f = tk.Frame(self._panels, bg=BG)
+        self._tab_frames[name] = f
+        return f
 
-    def _sugerir_g(self):
-        expr_f = self.e_f.get().strip()
-        if not expr_f:
-            messagebox.showwarning("Aviso", "Ingresá primero la función f(x).")
-            return
+    # ──────────── PANEL: CONVERGENCIA ────────────
+    def _build_panel_conv(self):
+        f = self._panel("Convergencia")
+        self._fig_conv = Figure(figsize=(7, 4), facecolor=BG)
+        self._ax_conv  = self._fig_conv.add_subplot(111)
+        self._style_ax(self._ax_conv)
+        self._canvas_conv = FigureCanvasTkAgg(self._fig_conv, master=f)
+        self._canvas_conv.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        self._btn_sugerir.config(state=tk.DISABLED, text="⏳ Consultando IA...")
+    # ──────────── PANEL: FUNCIÓN ────────────
+    def _build_panel_func(self):
+        f = self._panel("Función f(x)")
+        self._fig_func = Figure(figsize=(7, 4), facecolor=BG)
+        self._ax_func  = self._fig_func.add_subplot(111)
+        self._style_ax(self._ax_func)
+        self._canvas_func = FigureCanvasTkAgg(self._fig_func, master=f)
+        self._canvas_func.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-        def _tarea():
-            try:
-                candidatas = _llamar_api(expr_f)
-                self.after(0, lambda: self._mostrar_sugerencias(candidatas))
-            except Exception as exc:
-                self.after(0, lambda: messagebox.showerror(
-                    "Error de API",
-                    f"No se pudieron obtener sugerencias.\n\n{exc}"
-                ))
-            finally:
-                self.after(0, lambda: self._btn_sugerir.config(
-                    state=tk.NORMAL, text="✨ Sugerir g(x)"
-                ))
+    # ──────────── PANEL: TABLA ────────────
+    def _build_panel_tabla(self):
+        f = self._panel("Tabla")
 
-        threading.Thread(target=_tarea, daemon=True).start()
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("Dark.Treeview",
+                        background=BG2, fieldbackground=BG2,
+                        foreground=TEXT, rowheight=26,
+                        font=("JetBrains Mono", 9))
+        style.configure("Dark.Treeview.Heading",
+                        background=BG3, foreground=MUTED,
+                        font=("Segoe UI", 8, "bold"), relief="flat")
+        style.map("Dark.Treeview",
+                  background=[("selected", ACCENT)],
+                  foreground=[("selected", "#000")])
 
-    def _mostrar_sugerencias(self, candidatas):
-        try:
-            x0 = _evaluar_escalar(self.e_x0.get())
-        except Exception:
-            x0 = 0.0
+        cols = ("i", "xₙ", "g(xₙ)", "f(xₙ)", "error")
+        self._tree = ttk.Treeview(f, columns=cols, show="headings",
+                                   style="Dark.Treeview")
+        widths = [40, 130, 130, 130, 110]
+        for col, w in zip(cols, widths):
+            self._tree.heading(col, text=col)
+            self._tree.column(col, width=w, anchor="e")
 
-        _VentanaSugerencias(
-            self, candidatas, x0,
-            callback=self._cargar_g_seleccionada
-        )
+        sb = ttk.Scrollbar(f, orient="vertical", command=self._tree.yview)
+        self._tree.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._tree.pack(fill=tk.BOTH, expand=True)
 
-    def _cargar_g_seleccionada(self, expr_g: str):
-        self.e_g.delete(0, tk.END)
-        self.e_g.insert(0, expr_g)
-        self._actualizar_validez()
+    # ──────────── PANEL: PASO A PASO ────────────
+    def _build_panel_steps(self):
+        f = self._panel("Paso a paso")
 
-    # ── Lógica de cálculo ────────────────────────────────────────────────────
+        frame_scroll = tk.Frame(f, bg=BG)
+        frame_scroll.pack(fill=tk.BOTH, expand=True)
 
-    def _log(self, texto):
-        self.txt.insert(tk.END, texto + "\n")
-        self.txt.see(tk.END)
+        self._steps_canvas = tk.Canvas(frame_scroll, bg=BG,
+                                        highlightthickness=0)
+        vsb = tk.Scrollbar(frame_scroll, orient="vertical",
+                            command=self._steps_canvas.yview)
+        self._steps_canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._steps_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        self._steps_inner = tk.Frame(self._steps_canvas, bg=BG)
+        self._steps_win   = self._steps_canvas.create_window(
+            (0, 0), window=self._steps_inner, anchor="nw")
+
+        self._steps_inner.bind("<Configure>", self._on_steps_resize)
+        self._steps_canvas.bind("<Configure>", self._on_canvas_resize)
+        self._steps_canvas.bind_all("<MouseWheel>",
+            lambda e: self._steps_canvas.yview_scroll(
+                int(-1*(e.delta/120)), "units"))
+
+    def _on_steps_resize(self, e):
+        self._steps_canvas.configure(
+            scrollregion=self._steps_canvas.bbox("all"))
+
+    def _on_canvas_resize(self, e):
+        self._steps_canvas.itemconfig(self._steps_win, width=e.width)
+
+    # ──────────── PANEL: ANÁLISIS ────────────
+    def _build_panel_analisis(self):
+        f = self._panel("Análisis")
+        self._txt_analisis = tk.Text(
+            f, bg=BG3, fg=TEXT,
+            font=("JetBrains Mono", 10),
+            bd=0, padx=20, pady=16,
+            relief="flat", wrap="word",
+            state="disabled")
+        self._txt_analisis.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+
+        ta = self._txt_analisis
+        ta.tag_config("title",  foreground=ACCENT,  font=("JetBrains Mono", 10, "bold"))
+        ta.tag_config("ok",     foreground=GREEN)
+        ta.tag_config("warn",   foreground=YELLOW)
+        ta.tag_config("err",    foreground=RED)
+        ta.tag_config("info",   foreground=PURPLE)
+        ta.tag_config("muted",  foreground=MUTED)
+
+    # ──────────── MATPLOTLIB STYLE ────────────
+    def _style_ax(self, ax):
+        ax.set_facecolor(BG2)
+        for spine in ax.spines.values():
+            spine.set_color(BORDER)
+        ax.tick_params(colors=MUTED, labelsize=8)
+        ax.xaxis.label.set_color(MUTED)
+        ax.yaxis.label.set_color(MUTED)
+        ax.grid(True, color=BORDER, linewidth=0.6, alpha=0.7)
+
+    # ──────────── CALCULAR ────────────
     def _calcular(self):
-        self.txt.delete(1.0, tk.END)
         try:
-            expr_f   = self.e_f.get().strip()
-            expr_g   = self.e_g.get().strip()
-            x0       = _evaluar_escalar(self.e_x0.get())
-            tol      = _evaluar_escalar(self.e_tol.get())
-            max_iter = int(self.e_iter.get())
+            fexpr = self.e_f.get().strip()
+            gexpr = self.e_g.get().strip()
+            x0    = float(eval(self.e_x0.get()))
+            tol   = float(eval(self.e_tol.get()))
+            it    = int(self.e_it.get())
 
-            # Advertencia si g(x) puede divergir
-            valida, max_d, _ = validar_convergencia(expr_g, x0)
-            if not valida:
-                continuar = messagebox.askyesno(
-                    "Advertencia de convergencia",
-                    f"|g'(x)| ≈ {max_d:.3f} cerca de x₀.\n"
-                    "El método puede divergir.\n\n¿Querés continuar de todas formas?"
-                )
-                if not continuar:
-                    return
+            raiz, hist, converged = punto_fijo(fexpr, gexpr, x0, tol, it)
+            self._hist  = hist
+            self._raiz  = raiz
+            self._fexpr = fexpr
+            self._gexpr = gexpr
+            self._x0    = x0
 
-            raiz, historial, estado = punto_fijo(expr_f, expr_g, x0, tol, max_iter)
-            self._raiz = raiz
-            self._historial = historial
-
-            self._log(f"  Punto Fijo: f(x) = {expr_f}")
-            self._log(f"  g(x) = {expr_g}  |  x₀ = {x0}  |  Tolerancia: {tol}\n")
-            self._log(f"{'Iter':<6} | {'x (aprox.)':<15} | {'f(x)':<16} | {'Error Est.'}")
-            self._log("─" * 60)
-
-            for r in historial:
-                self._log(f"{r['i']:<6} | {r['x']:<15.8f} | {r['fx']:<16.6e} | {r['error']:.6e}")
-
-            self._log("─" * 60)
-            if estado == "max_iter":
-                self._log("⚠  Máximas iteraciones alcanzadas sin convergencia.")
-            else:
-                self._log(f"✔  Raíz aproximada : {raiz:.10f}")
-                self._log(f"   Error final     : {historial[-1]['error']:.2e}")
-                self._log(f"   Iteraciones     : {len(historial)}")
-
-            self._graficar()
+            self._render_convergencia(hist)
+            self._render_tabla(hist)
+            self._render_pasos(hist, fexpr, gexpr, x0, tol)
+            self._render_analisis(hist, raiz, tol, fexpr, gexpr, x0, converged)
+            self._show_tab("Paso a paso")
 
         except Exception as exc:
-            messagebox.showerror("Error", f"Verificá los datos ingresados.\n{exc}")
+            messagebox.showerror("Error", str(exc))
 
-    # ── Gráfico ──────────────────────────────────────────────────────────────
-
+    # ──────────── GRAFICAR ────────────
     def _graficar(self):
         try:
-            expr_f = self.e_f.get().strip()
-            expr_g = self.e_g.get().strip()
-            x0     = _evaluar_escalar(self.e_x0.get())
+            fexpr = self.e_f.get().strip()
+            gexpr = self.e_g.get().strip()
+            x0    = float(eval(self.e_x0.get()))
+            margin = 2.0
+            xs = np.linspace(x0 - margin, x0 + margin, 500)
+
+            def safe(expr, x):
+                try:    return evaluar(expr, x)
+                except: return float("nan")
+
+            ys  = [safe(fexpr, x) for x in xs]
+            gys = [safe(gexpr, x) for x in xs]
+
+            ax = self._ax_func
+            ax.clear()
+            self._style_ax(ax)
+            ax.plot(xs, ys,  color=ACCENT,  linewidth=2, label="f(x)")
+            ax.plot(xs, gys, color=PURPLE,  linewidth=2, linestyle="--", label="g(x)")
+            ax.plot(xs, xs,  color=GREEN,   linewidth=1, linestyle=":",  label="y = x")
+            ax.axhline(0, color=BORDER, linewidth=0.8)
+
+            if self._raiz is not None:
+                ax.scatter([self._raiz], [0], color=ORANGE,
+                           zorder=5, s=70, label=f"raíz ≈ {self._raiz:.6f}")
+
+            ax.legend(facecolor=BG3, edgecolor=BORDER,
+                      labelcolor=TEXT, fontsize=8)
+            self._canvas_func.draw()
+            self._show_tab("Función f(x)")
+
         except Exception as exc:
-            messagebox.showerror("Error", f"Valores inválidos para graficar.\n{exc}")
-            return
+            messagebox.showerror("Error", str(exc))
 
-        self.ax.clear()
+    # ──────────── RENDER: CONVERGENCIA ────────────
+    def _render_convergencia(self, hist):
+        iters  = [r["i"]     for r in hist]
+        errors = [r["error"] for r in hist]
 
-        centro = self._raiz if self._raiz is not None else x0
-        margen = max(abs(centro) * 0.6, 1.5)
-        x_vals = np.linspace(centro - margen, centro + margen, 600)
+        ax = self._ax_conv
+        ax.clear()
+        self._style_ax(ax)
+        ax.semilogy(iters, errors, color=ACCENT, linewidth=2, marker="o",
+                    markersize=4, markerfacecolor=ACCENT)
+        ax.fill_between(iters, errors, alpha=0.08, color=ACCENT)
+        ax.set_xlabel("Iteración", color=MUTED, fontsize=9)
+        ax.set_ylabel("Error (log)", color=MUTED, fontsize=9)
+        ax.set_title("Convergencia del error", color=TEXT, fontsize=10, pad=10)
+        self._canvas_conv.draw()
 
-        def safe_eval_array(expr):
-            ys = []
-            for xv in x_vals:
-                try:
-                    ys.append(float(_evaluar(expr, float(xv))))
-                except Exception:
-                    ys.append(np.nan)
-            return np.array(ys, dtype=float)
+    # ──────────── RENDER: TABLA ────────────
+    def _render_tabla(self, hist):
+        for row in self._tree.get_children():
+            self._tree.delete(row)
+        for r in hist:
+            self._tree.insert("", "end", values=(
+                r["i"],
+                f"{r['xn']:.8f}",
+                f"{r['gx']:.8f}",
+                f"{r['fx']:.8f}",
+                f"{r['error']:.2e}",
+            ))
 
-        y_f = safe_eval_array(expr_f)
-        y_g = safe_eval_array(expr_g)
+    # ──────────── RENDER: PASO A PASO ────────────
+    def _render_pasos(self, hist, fexpr, gexpr, x0, tol):
+        for w in self._steps_inner.winfo_children():
+            w.destroy()
 
-        self.ax.plot(x_vals, y_f, color="#1565C0", linewidth=2.2, label=f"f(x) = {expr_f}")
-        self.ax.plot(x_vals, y_g, color="#2E7D32", linewidth=2.0, linestyle="--",
-                     label=f"g(x) = {expr_g}")
-        self.ax.plot(x_vals, x_vals, color="#B71C1C", linewidth=1.4, linestyle="-.",
-                     alpha=0.7, label="Identidad y = x")
+        # derivada para mostrar en config
+        try:
+            gp = abs(derivada_num(gexpr, x0))
+            gp_txt   = f"|g'(x₀)| ≈ {gp:.4f} {'< 1  →  converge' if gp < 1 else '≥ 1  →  puede diverger'}"
+            gp_color = ACCENT if gp < 1 else YELLOW
+        except Exception:
+            gp_txt   = "No se pudo evaluar g'(x₀)"
+            gp_color = YELLOW
 
-        self.ax.axhline(0, color="#333", linewidth=0.8, alpha=0.55)
-        self.ax.axvline(0, color="#333", linewidth=0.8, alpha=0.55)
+        # ── bloque config
+        cfg = tk.Frame(self._steps_inner, bg=BG3,
+                       highlightthickness=1, highlightbackground=BORDER)
+        cfg.pack(fill=tk.X, padx=12, pady=(12, 8))
 
-        if self._raiz is not None:
-            self.ax.scatter(
-                [self._raiz], [self._raiz], color="#FF6F00",
-                zorder=6, s=90, label=f"Punto fijo ≈ {self._raiz:.6f}"
-            )
-            self.ax.scatter([self._raiz], [0], color="#FF6F00", zorder=6, s=90, marker="X")
-            self.ax.annotate(
-                f"  Raíz ≈ {self._raiz:.6f}",
-                xy=(self._raiz, 0), fontsize=9, color="#FF6F00", va="bottom"
-            )
+        tk.Label(cfg, text="Configuración inicial", bg=BG3, fg=TEXT,
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=14, pady=(10, 4))
 
-        all_finite = np.concatenate([y_f[np.isfinite(y_f)], y_g[np.isfinite(y_g)]])
-        if len(all_finite):
-            ymin = np.percentile(all_finite, 2)
-            ymax = np.percentile(all_finite, 98)
-            rng  = ymax - ymin or 1
-            self.ax.set_ylim(ymin - rng * 0.15, ymax + rng * 0.15)
+        for label, val, col in [
+            ("f(x)",           fexpr,                    ACCENT),
+            ("g(x)",           gexpr,                    PURPLE),
+            ("Punto inicial",  f"x₀ = {x0}",             ACCENT),
+            ("Tolerancia",     str(tol),                  ACCENT),
+            ("Fórmula",        "x_{n+1} = g(x_n)",        ACCENT),
+            ("Condición",      gp_txt,                    gp_color),
+        ]:
+            row = tk.Frame(cfg, bg=BG3)
+            row.pack(anchor="w", padx=14, pady=1)
+            tk.Label(row, text=f"— {label} = ", bg=BG3, fg=MUTED,
+                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+            tk.Label(row, text=val, bg=BG3, fg=col,
+                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
 
-        self.ax.set_title("Método de Punto Fijo", fontsize=13, fontweight="bold")
-        self.ax.set_xlabel("x")
-        self.ax.set_ylabel("y")
-        self.ax.legend(fontsize=9, loc="best")
-        self.ax.grid(True, linestyle=":", alpha=0.55)
-        self.fig.tight_layout()
-        self.canvas.draw()
+        tk.Frame(cfg, bg=BG3, height=8).pack()
+
+        # ── iteraciones
+        for r in hist:
+            converged = r["error"] < tol
+            self._step_block(r, converged, tol)
+
+    def _step_block(self, r, converged, tol):
+        bar_color = GREEN if converged else ACCENT
+
+        outer = tk.Frame(self._steps_inner, bg=BG)
+        outer.pack(fill=tk.X, padx=12, pady=3)
+
+        bar = tk.Frame(outer, bg=bar_color, width=3)
+        bar.pack(side=tk.LEFT, fill=tk.Y)
+
+        inner = tk.Frame(outer, bg=BG2)
+        inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # header
+        hdr = tk.Frame(inner, bg=BG2)
+        hdr.pack(anchor="w", padx=12, pady=(8, 4))
+
+        num_lbl = tk.Label(hdr, text=f" {r['i']} ", bg=bar_color,
+                           fg="#000", font=("Segoe UI", 8, "bold"),
+                           padx=4, pady=1)
+        num_lbl.pack(side=tk.LEFT)
+
+        tk.Label(hdr,
+                 text=f"  ·  x_n = {r['xn']:.8f}",
+                 bg=BG2, fg=MUTED,
+                 font=("JetBrains Mono", 8)).pack(side=tk.LEFT)
+
+        # líneas de cálculo
+        lines = [
+            (f"— f(x_n) = f({r['xn']:.6f})", "=", f" {r['fx']:.8f}",  PURPLE),
+            (f"— g(x_n) = g({r['xn']:.6f})", "=", f" {r['gx']:.8f}",  PURPLE),
+            (f"— x_{{n+1}}",                  "=", f" {r['xn1']:.8f}", ACCENT),
+        ]
+
+        for pre, eq, val, col in lines:
+            row = tk.Frame(inner, bg=BG2)
+            row.pack(anchor="w", padx=12, pady=1)
+            tk.Label(row, text=pre, bg=BG2, fg=MUTED,
+                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+            tk.Label(row, text=eq,  bg=BG2, fg=TEXT,
+                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+            tk.Label(row, text=val, bg=BG2, fg=col,
+                     font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+
+        # error + estado
+        err_row = tk.Frame(inner, bg=BG2)
+        err_row.pack(anchor="w", padx=12, pady=(1, 8))
+        tk.Label(err_row, text="— Error = |x_{n+1} − x_n| = ", bg=BG2, fg=MUTED,
+                 font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+        tk.Label(err_row, text=f"{r['error']:.2e}", bg=BG2, fg=ORANGE,
+                 font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+
+        estado_text  = "  ✔ convergido" if converged else "  → continuar"
+        estado_color = GREEN           if converged else YELLOW
+        tk.Label(err_row, text=estado_text, bg=BG2, fg=estado_color,
+                 font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+
+    # ──────────── RENDER: ANÁLISIS ────────────
+    def _render_analisis(self, hist, raiz, tol, fexpr, gexpr, x0, converged):
+        info = analisis_punto_fijo(hist, raiz, tol, fexpr, gexpr, x0)
+        ta   = self._txt_analisis
+        ta.config(state="normal")
+        ta.delete("1.0", tk.END)
+
+        def w(text, tag=None):
+            ta.insert(tk.END, text, tag)
+
+        w("ANÁLISIS DEL RESULTADO — PUNTO FIJO\n\n", "title")
+        w("✔", "ok");  w(f" Convergió en ");    w(str(info["iters"]), "info"); w(" iteraciones\n")
+        w("✔", "ok");  w(f" Raíz ≈ ");          w(f"{info['raiz']:.8f}", "info"); w("\n")
+        w("✔", "ok");  w(f" f(raíz) = ");        w(f"{info['fval']:.10f}", "info"); w("\n\n")
+        w("✔", "ok");  w(f" Error final:         "); w(f"{info['ue']:.2e}", "info"); w("\n")
+        w("✔", "ok");  w(f" Factor de reducción: "); w(f"{info['factor']:.4f}", "info")
+        w(f"  →  convergencia "); w(info["tipo"], "ok"); w("\n\n")
+
+        # condición |g'(x)|
+        if info["conv_ok"] is True:
+            w("✔", "ok");   w(f" {info['conv_txt']}\n")
+        elif info["conv_ok"] is False:
+            w("⚠", "warn"); w(f" {info['conv_txt']}\n")
+        else:
+            w("?", "muted"); w(f" {info['conv_txt']}\n")
+
+        w("\nCRITERIO DE PARADA\n", "title")
+        w(f"  {info['ue']:.2e} < {info['tol']}  →  ")
+        if info["ok"]:
+            w("✔ cumplido\n", "ok")
+        else:
+            w("✗ no cumplido (max iter alcanzado)\n", "warn")
+
+        ta.config(state="disabled")
+
+    # ──────────── SUGERENCIAS g(x) ────────────
+    def _show_suggest(self, event):
+        fexpr = self.e_f.get().strip()
+        sugs  = sugerencias_g(fexpr)
+
+        top = tk.Toplevel(self)
+        top.title("")
+        top.configure(bg=BG2)
+        top.resizable(False, False)
+        top.geometry(f"+{event.x_root}+{event.y_root + 8}")
+
+        tk.Label(top, text="  Sugerencias de g(x)", bg=BG2, fg=MUTED,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=8, pady=(8, 4))
+
+        for expr, desc in sugs:
+            row = tk.Frame(top, bg=BG2, cursor="hand2")
+            row.pack(fill=tk.X, padx=6, pady=2)
+            row.bind("<Enter>", lambda e, r=row: r.config(bg=BG3))
+            row.bind("<Leave>", lambda e, r=row: r.config(bg=BG2))
+
+            tk.Label(row, text=expr, bg=BG2, fg=ACCENT,
+                     font=("JetBrains Mono", 9),
+                     padx=8, pady=4).pack(anchor="w")
+            tk.Label(row, text=f"  {desc}", bg=BG2, fg=MUTED,
+                     font=("Segoe UI", 8), pady=0).pack(anchor="w", padx=8)
+
+            def on_click(e=expr, w=top):
+                self.e_g.delete(0, tk.END)
+                self.e_g.insert(0, e)
+                w.destroy()
+
+            for widget in (row,) + row.winfo_children():
+                widget.bind("<Button-1>", lambda ev, fn=on_click: fn())
+
+        tk.Frame(top, bg=BG2, height=6).pack()
+
+
+# ══════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════
+if __name__ == "__main__":
+    root = tk.Tk()
+    app  = PuntoFijoApp(root, standalone=True)
+    app.pack(fill=tk.BOTH, expand=True)
+    root.mainloop()

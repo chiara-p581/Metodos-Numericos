@@ -24,7 +24,7 @@ ORANGE = "#f0883e"
 
 
 # ══════════════════════════════════════
-# LÓGICA — AITKEN Δ²
+# LÓGICA — NEWTON-RAPHSON
 # ══════════════════════════════════════
 def _env(x):
     e = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
@@ -35,53 +35,61 @@ def _env(x):
 def evaluar(expr, x):
     return eval(expr, {"__builtins__": {}}, _env(x))
 
-def aitken(gexpr, x0, tol=1e-6, max_iter=100):
+def newton(fexpr, dfexpr, x0, tol=1e-6, max_iter=100):
     hist = []
     x    = x0
 
     for i in range(max_iter):
         try:
-            x1  = evaluar(gexpr, x)
-            x2  = evaluar(gexpr, x1)
-            num = (x1 - x) ** 2
-            den = x2 - 2*x1 + x
+            fx  = evaluar(fexpr,  x)
+            dfx = evaluar(dfexpr, x)
 
-            if den == 0:
-                return x, hist, "division_cero"
+            if dfx == 0:
+                return x, hist, "derivada_cero"
 
-            xhat  = x - num / den
-            error = abs(xhat - x)
+            xnew  = x - fx / dfx
+            error = abs(xnew - x)
 
             hist.append({
                 "i":    i + 1,
                 "xn":   x,
-                "x1":   x1,
-                "x2":   x2,
-                "xhat": xhat,
+                "xn1":  xnew,
+                "fx":   fx,
+                "dfx":  dfx,
+                "paso": fx / dfx,
                 "error": error,
             })
 
             if error < tol:
-                return xhat, hist, "convergencia"
+                return xnew, hist, "convergencia"
 
-            x = xhat
+            x = xnew
 
         except Exception as exc:
             return None, hist, f"error: {exc}"
 
     return x, hist, "max_iter"
 
-def analisis_aitken(hist, raiz, tol, gexpr):
+def analisis_newton(hist, raiz, tol, fexpr, dfexpr):
     errores = [r["error"] for r in hist if r["error"] > 0]
-    ratios  = [errores[i]/errores[i-1] for i in range(1, len(errores))
+    ratios  = [errores[i]/errores[i-1]**2 for i in range(1, len(errores))
                if errores[i-1] != 0]
-    factor  = sum(ratios)/len(ratios) if ratios else 0
-    tipo    = "rápida" if factor < 0.1 else ("moderada" if factor < 0.5 else "lenta")
-    ue      = errores[-1] if errores else 0
+    factor_cuad = sum(ratios)/len(ratios) if ratios else 0
+    ue   = errores[-1] if errores else 0
+
+    try:
+        fval = evaluar(fexpr, raiz)
+    except Exception:
+        fval = float("nan")
+
     return {
-        "iters": len(hist), "raiz": raiz, "ue": ue,
-        "factor": factor,   "tipo": tipo,  "tol": tol,
-        "ok": ue < tol,
+        "iters":       len(hist),
+        "raiz":        raiz,
+        "fval":        fval,
+        "ue":          ue,
+        "factor_cuad": factor_cuad,
+        "tol":         tol,
+        "ok":          ue < tol,
     }
 
 
@@ -115,13 +123,13 @@ def _dk(h):
 
 
 # ══════════════════════════════════════
-# CLASE PRINCIPAL — AITKEN
+# CLASE PRINCIPAL — NEWTON-RAPHSON
 # ══════════════════════════════════════
-class AitkenApp(tk.Frame):
+class NewtonApp(tk.Frame):
 
     TABS = [
         ("📉", "Convergencia"),
-        ("📊", "Función g(x)"),
+        ("📊", "Función f(x)"),
         ("🗂",  "Tabla"),
         ("🔍", "Paso a paso"),
         ("🧠", "Análisis"),
@@ -131,14 +139,14 @@ class AitkenApp(tk.Frame):
         super().__init__(master, bg=BG)
 
         if standalone:
-            master.title("Aitken Δ² — Métodos Numéricos")
+            master.title("Newton-Raphson — Métodos Numéricos")
             master.configure(bg=BG)
             master.geometry("1200x700")
             master.minsize(900, 580)
 
         self._hist  = []
         self._raiz  = None
-        self._gexpr = ""
+        self._fexpr = ""
         self._build()
 
     # ──────────── LAYOUT ────────────
@@ -153,13 +161,13 @@ class AitkenApp(tk.Frame):
         bar = tk.Frame(self, bg=BG2, height=44)
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
-        tk.Label(bar, text="⚙  Aitken Δ²", bg=BG2, fg=TEXT,
+        tk.Label(bar, text="⚙  Newton-Raphson", bg=BG2, fg=TEXT,
                  font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT, padx=16)
-        tk.Label(bar, text="Aceleración de Aitken — x̂ = xₙ − (x₁−xₙ)² / (x₂−2x₁+xₙ)",
+        tk.Label(bar, text="x_{n+1} = x_n − f(x_n) / f'(x_n)",
                  bg=BG2, fg=MUTED, font=("Segoe UI", 9)).pack(side=tk.RIGHT, padx=16)
 
     def _sidebar(self, parent):
-        sb = tk.Frame(parent, bg=BG2, width=260)
+        sb = tk.Frame(parent, bg=BG2, width=270)
         sb.pack(side=tk.LEFT, fill=tk.Y)
         sb.pack_propagate(False)
 
@@ -169,16 +177,16 @@ class AitkenApp(tk.Frame):
         tk.Label(inner, text="PARÁMETROS", bg=BG2, fg=MUTED,
                  font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 8))
 
-        self.e_g   = _labeled_entry(inner, "g(x)  — función de iteración",
-                                    "sqrt((2*(x+2))/pi)")
-        self.e_x0  = _labeled_entry(inner, "x₀  (punto inicial)", "1.4")
+        self.e_f   = _labeled_entry(inner, "f(x)",            "x**3 - x - 4")
+        self.e_df  = _labeled_entry(inner, "f'(x)  — derivada", "3*x**2 - 1")
+        self.e_x0  = _labeled_entry(inner, "x₀  (punto inicial)", "1")
         self.e_tol = _labeled_entry(inner, "Tolerancia",          "1e-6")
         self.e_it  = _labeled_entry(inner, "Max iteraciones",     "100")
 
         tk.Frame(inner, bg=BORDER, height=1).pack(fill=tk.X, pady=8)
 
         _btn(inner, "▶  Calcular",       self._calcular).pack(fill=tk.X, pady=3)
-        _btn(inner, "📈  Graficar g(x)", self._graficar,
+        _btn(inner, "📈  Graficar f(x)", self._graficar,
              color=BG3, fg=ACCENT).pack(fill=tk.X, pady=3)
 
     def _main_area(self, parent):
@@ -235,7 +243,7 @@ class AitkenApp(tk.Frame):
 
     # ──────────── PANEL: FUNCIÓN ────────────
     def _build_panel_func(self):
-        f = self._panel("Función g(x)")
+        f = self._panel("Función f(x)")
         self._fig_func = Figure(figsize=(7,4), facecolor=BG)
         self._ax_func  = self._fig_func.add_subplot(111)
         self._style_ax(self._ax_func)
@@ -258,10 +266,10 @@ class AitkenApp(tk.Frame):
                   background=[("selected", ACCENT)],
                   foreground=[("selected", "#000")])
 
-        cols = ("i", "xₙ", "x₁=g(xₙ)", "x₂=g(x₁)", "x̂ (Aitken)", "error")
+        cols = ("i", "xₙ", "f(xₙ)", "f'(xₙ)", "paso", "error")
         self._tree = ttk.Treeview(f, columns=cols, show="headings",
                                    style="Dark.Treeview")
-        widths = [35, 110, 110, 110, 110, 100]
+        widths = [35, 120, 100, 100, 100, 100]
         for col, w in zip(cols, widths):
             self._tree.heading(col, text=col)
             self._tree.column(col, width=w, anchor="e")
@@ -321,21 +329,23 @@ class AitkenApp(tk.Frame):
     # ──────────── CALCULAR ────────────
     def _calcular(self):
         try:
-            gexpr = self.e_g.get().strip()
-            x0    = float(eval(self.e_x0.get()))
-            tol   = float(eval(self.e_tol.get()))
-            it    = int(self.e_it.get())
+            fexpr  = self.e_f.get().strip()
+            dfexpr = self.e_df.get().strip()
+            x0     = float(eval(self.e_x0.get()))
+            tol    = float(eval(self.e_tol.get()))
+            it     = int(self.e_it.get())
 
-            raiz, hist, estado = aitken(gexpr, x0, tol, it)
-            self._hist  = hist
-            self._raiz  = raiz
-            self._gexpr = gexpr
-            self._x0    = x0
+            raiz, hist, estado = newton(fexpr, dfexpr, x0, tol, it)
+            self._hist   = hist
+            self._raiz   = raiz
+            self._fexpr  = fexpr
+            self._dfexpr = dfexpr
+            self._x0     = x0
 
             self._render_convergencia(hist)
             self._render_tabla(hist)
-            self._render_pasos(hist, gexpr, x0, tol)
-            self._render_analisis(hist, raiz, tol, gexpr, estado)
+            self._render_pasos(hist, fexpr, dfexpr, x0, tol)
+            self._render_analisis(hist, raiz, tol, fexpr, dfexpr, estado)
             self._show_tab("Paso a paso")
 
         except Exception as exc:
@@ -344,32 +354,47 @@ class AitkenApp(tk.Frame):
     # ──────────── GRAFICAR ────────────
     def _graficar(self):
         try:
-            gexpr = self.e_g.get().strip()
-            x0    = float(eval(self.e_x0.get()))
-            xs    = np.linspace(x0 - 2, x0 + 2, 500)
+            fexpr  = self.e_f.get().strip()
+            dfexpr = self.e_df.get().strip()
+            x0     = float(eval(self.e_x0.get()))
+            xs     = np.linspace(x0 - 5, x0 + 5, 600)
 
-            def safe(x):
-                try:    return evaluar(gexpr, x)
+            def safe(expr, x):
+                try:    return evaluar(expr, x)
                 except: return float("nan")
 
-            gys = [safe(x) for x in xs]
+            ys  = [safe(fexpr,  x) for x in xs]
+            dys = [safe(dfexpr, x) for x in xs]
 
             ax = self._ax_func
             ax.clear()
             self._style_ax(ax)
-            ax.plot(xs, gys, color=PURPLE, linewidth=2, label="g(x)")
-            ax.plot(xs, xs,  color=GREEN,  linewidth=1,
-                    linestyle=":", label="y = x")
+            ax.plot(xs, ys,  color=ACCENT,  linewidth=2, label="f(x)")
+            ax.plot(xs, dys, color=PURPLE,  linewidth=1.5,
+                    linestyle="--", alpha=0.7, label="f'(x)")
             ax.axhline(0, color=BORDER, linewidth=0.8)
 
+            # tangentes en cada iteración
+            if self._hist:
+                for r in self._hist[:6]:   # max 6 tangentes visibles
+                    xn  = r["xn"]
+                    fx  = r["fx"]
+                    dfx = r["dfx"]
+                    if dfx != 0:
+                        x_tang = np.array([xn - 1.5, xn + 1.5])
+                        y_tang = fx + dfx * (x_tang - xn)
+                        ax.plot(x_tang, y_tang, color=YELLOW,
+                                linewidth=0.8, alpha=0.5)
+                        ax.scatter([xn], [fx], color=ORANGE, s=35, zorder=4)
+
             if self._raiz is not None:
-                ax.scatter([self._raiz], [self._raiz], color=ORANGE,
-                           zorder=5, s=70, label=f"punto fijo ≈ {self._raiz:.6f}")
+                ax.scatter([self._raiz], [0], color=GREEN,
+                           zorder=5, s=80, label=f"raíz ≈ {self._raiz:.6f}")
 
             ax.legend(facecolor=BG3, edgecolor=BORDER,
                       labelcolor=TEXT, fontsize=8)
             self._canvas_func.draw()
-            self._show_tab("Función g(x)")
+            self._show_tab("Función f(x)")
 
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
@@ -386,7 +411,7 @@ class AitkenApp(tk.Frame):
         ax.fill_between(iters, errors, alpha=0.08, color=ACCENT)
         ax.set_xlabel("Iteración", color=MUTED, fontsize=9)
         ax.set_ylabel("Error (log)", color=MUTED, fontsize=9)
-        ax.set_title("Convergencia del error — Aitken Δ²",
+        ax.set_title("Convergencia del error — Newton-Raphson",
                      color=TEXT, fontsize=10, pad=10)
         self._canvas_conv.draw()
 
@@ -398,14 +423,14 @@ class AitkenApp(tk.Frame):
             self._tree.insert("", "end", values=(
                 r["i"],
                 f"{r['xn']:.8f}",
-                f"{r['x1']:.8f}",
-                f"{r['x2']:.8f}",
-                f"{r['xhat']:.8f}",
+                f"{r['fx']:.6e}",
+                f"{r['dfx']:.6e}",
+                f"{r['paso']:.8f}",
                 f"{r['error']:.2e}",
             ))
 
     # ──────────── RENDER: PASO A PASO ────────────
-    def _render_pasos(self, hist, gexpr, x0, tol):
+    def _render_pasos(self, hist, fexpr, dfexpr, x0, tol):
         for w in self._si.winfo_children():
             w.destroy()
 
@@ -419,10 +444,11 @@ class AitkenApp(tk.Frame):
                      anchor="w", padx=14, pady=(10, 4))
 
         for label, val, col in [
-            ("g(x)",       gexpr,                               PURPLE),
-            ("x₀",         str(x0),                             ACCENT),
-            ("Tolerancia", str(tol),                             ACCENT),
-            ("Fórmula",    "x̂ = xₙ − (x₁−xₙ)² / (x₂−2x₁+xₙ)", ACCENT),
+            ("f(x)",        fexpr,                    ACCENT),
+            ("f'(x)",       dfexpr,                   PURPLE),
+            ("x₀",          str(x0),                  ACCENT),
+            ("Tolerancia",  str(tol),                  ACCENT),
+            ("Fórmula",     "x_{n+1} = x_n − f(x_n) / f'(x_n)", ACCENT),
         ]:
             row = tk.Frame(cfg, bg=BG3)
             row.pack(anchor="w", padx=14, pady=1)
@@ -453,19 +479,17 @@ class AitkenApp(tk.Frame):
         hdr.pack(anchor="w", padx=12, pady=(8, 4))
         tk.Label(hdr, text=f" {r['i']} ", bg=bar_color, fg="#000",
                  font=("Segoe UI", 8, "bold"), padx=4, pady=1).pack(side=tk.LEFT)
-        tk.Label(hdr, text=f"  ·  xₙ = {r['xn']:.8f}",
+        tk.Label(hdr, text=f"  ·  x_n = {r['xn']:.8f}",
                  bg=BG2, fg=MUTED,
                  font=("JetBrains Mono", 8)).pack(side=tk.LEFT)
 
-        # pasos intermedios del método
+        # pasos del método
         steps = [
-            (f"— x₁ = g(xₙ) = g({r['xn']:.6f})",          "=", f" {r['x1']:.8f}",   PURPLE),
-            (f"— x₂ = g(x₁) = g({r['x1']:.6f})",          "=", f" {r['x2']:.8f}",   PURPLE),
-            ( "— num = (x₁ − xₙ)²",                         "=",
-              f" {(r['x1']-r['xn'])**2:.8f}",               MUTED),
-            ( "— den = x₂ − 2·x₁ + xₙ",                    "=",
-              f" {r['x2']-2*r['x1']+r['xn']:.8f}",         MUTED),
-            (f"— x̂ = xₙ − num/den",                         "=", f" {r['xhat']:.8f}", ACCENT),
+            (f"— f(x_n)  = f({r['xn']:.6f})",  "=", f" {r['fx']:.8f}",   PURPLE),
+            (f"— f'(x_n) = f'({r['xn']:.6f})", "=", f" {r['dfx']:.8f}",  PURPLE),
+            ( "— paso    = f(x_n) / f'(x_n)",   "=", f" {r['paso']:.8f}", MUTED),
+            (f"— x_{{n+1}} = {r['xn']:.6f} − ({r['paso']:.6f})",
+             "=", f" {r['xn1']:.8f}", ACCENT),
         ]
 
         for pre, eq, val, col in steps:
@@ -481,7 +505,7 @@ class AitkenApp(tk.Frame):
         # error + estado
         err_row = tk.Frame(inner, bg=BG2)
         err_row.pack(anchor="w", padx=12, pady=(1, 8))
-        tk.Label(err_row, text="— Error = |x̂ − xₙ| = ",
+        tk.Label(err_row, text="— Error = |x_{n+1} − x_n| = ",
                  bg=BG2, fg=MUTED,
                  font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
         tk.Label(err_row, text=f"{r['error']:.2e}",
@@ -493,8 +517,8 @@ class AitkenApp(tk.Frame):
                  font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
 
     # ──────────── RENDER: ANÁLISIS ────────────
-    def _render_analisis(self, hist, raiz, tol, gexpr, estado):
-        info = analisis_aitken(hist, raiz, tol, gexpr)
+    def _render_analisis(self, hist, raiz, tol, fexpr, dfexpr, estado):
+        info = analisis_newton(hist, raiz, tol, fexpr, dfexpr)
         ta   = self._ta
         ta.config(state="normal")
         ta.delete("1.0", tk.END)
@@ -502,21 +526,26 @@ class AitkenApp(tk.Frame):
         def w(text, tag=None):
             ta.insert(tk.END, text, tag)
 
-        w("ANÁLISIS DEL RESULTADO — AITKEN Δ²\n\n", "title")
-        w("✔", "ok");  w(f" Convergió en ");   w(str(info["iters"]), "info"); w(" iteraciones\n")
-        w("✔", "ok");  w(f" Punto fijo ≈ ");   w(f"{info['raiz']:.8f}", "info"); w("\n\n")
-        w("✔", "ok");  w(f" Error final:         "); w(f"{info['ue']:.2e}", "info"); w("\n")
-        w("✔", "ok");  w(f" Factor de reducción: "); w(f"{info['factor']:.4f}", "info")
-        w(f"  →  convergencia "); w(info["tipo"], "ok"); w("\n")
-        w("✔", "ok");  w(" Aitken Δ² acelera la convergencia de punto fijo.\n\n")
+        w("ANÁLISIS DEL RESULTADO — NEWTON-RAPHSON\n\n", "title")
+        w("✔", "ok");  w(f" Convergió en ");    w(str(info["iters"]), "info"); w(" iteraciones\n")
+        w("✔", "ok");  w(f" Raíz ≈ ");          w(f"{info['raiz']:.8f}", "info"); w("\n")
+        w("✔", "ok");  w(f" f(raíz) = ");        w(f"{info['fval']:.10f}", "info"); w("\n\n")
+        w("✔", "ok");  w(f" Error final:              ");
+        w(f"{info['ue']:.2e}", "info"); w("\n")
+        w("✔", "ok");  w(f" Factor cuadrático (C≈):  ");
+        w(f"{info['factor_cuad']:.4f}", "info"); w("\n")
+        w("✔", "ok");  w(" Newton-Raphson tiene convergencia ")
+        w("cuadrática", "ok"); w(" (orden 2).\n\n")
+
         w("ESTADO\n", "title")
         est_map = {
-            "convergencia":  ("✔ convergencia alcanzada", "ok"),
-            "division_cero": ("⚠ división por cero — denominador = 0", "warn"),
-            "max_iter":      ("⚠ máximo de iteraciones alcanzado", "warn"),
+            "convergencia":   ("✔ convergencia alcanzada", "ok"),
+            "derivada_cero":  ("⚠ derivada = 0 — no se puede continuar", "warn"),
+            "max_iter":       ("⚠ máximo de iteraciones alcanzado", "warn"),
         }
         txt, tag = est_map.get(estado, (f"? {estado}", "muted"))
         w(f"  {txt}\n", tag)
+
         w("\nCRITERIO DE PARADA\n", "title")
         w(f"  {info['ue']:.2e} < {info['tol']}  →  ")
         w("✔ cumplido\n" if info["ok"] else "✗ no cumplido\n",
@@ -530,6 +559,6 @@ class AitkenApp(tk.Frame):
 # ══════════════════════════════════════
 if __name__ == "__main__":
     root = tk.Tk()
-    app  = AitkenApp(root, standalone=True)
+    app  = NewtonApp(root, standalone=True)
     app.pack(fill=tk.BOTH, expand=True)
     root.mainloop()
