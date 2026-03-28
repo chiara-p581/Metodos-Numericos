@@ -90,18 +90,18 @@ def analisis_aitken(hist, raiz, tol, gexpr):
 # ══════════════════════════════════════
 def _labeled_entry(parent, label, default, bg=BG2):
     tk.Label(parent, text=label, bg=bg, fg=MUTED,
-             font=("JetBrains Mono", 8)).pack(anchor="w")
+             font=("Consolas", 10)).pack(anchor="w")
     e = tk.Entry(parent, bg=BG3, fg=TEXT, insertbackground=TEXT,
-                 font=("JetBrains Mono", 10), bd=0,
+                 font=("Consolas", 12), bd=0,
                  highlightthickness=1, highlightbackground=BORDER,
                  highlightcolor=ACCENT, relief="flat")
     e.insert(0, default)
-    e.pack(fill=tk.X, ipady=5, pady=(2, 8))
+    e.pack(fill=tk.X, ipady=7, pady=(2, 8))
     return e
 
 def _btn(parent, text, cmd, color=ACCENT, fg="#000000"):
     b = tk.Label(parent, text=text, bg=color, fg=fg,
-                 font=("Segoe UI", 10, "bold"),
+                 font=("Segoe UI", 15, "bold"),
                  padx=12, pady=7, cursor="hand2")
     b.bind("<Button-1>", lambda e: cmd())
     b.bind("<Enter>",    lambda e: b.config(bg=_dk(color)))
@@ -154,9 +154,9 @@ class AitkenApp(tk.Frame):
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
         tk.Label(bar, text="⚙  Aitken Δ²", bg=BG2, fg=TEXT,
-                 font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT, padx=16)
+                 font=("Segoe UI", 15, "bold")).pack(side=tk.LEFT, padx=16)
         tk.Label(bar, text="Aceleración de Aitken — x̂ = xₙ − (x₁−xₙ)² / (x₂−2x₁+xₙ)",
-                 bg=BG2, fg=MUTED, font=("Segoe UI", 9)).pack(side=tk.RIGHT, padx=16)
+                 bg=BG2, fg=MUTED, font=("Segoe UI", 11)).pack(side=tk.RIGHT, padx=16)
 
     def _sidebar(self, parent):
         sb = tk.Frame(parent, bg=BG2, width=260)
@@ -167,7 +167,7 @@ class AitkenApp(tk.Frame):
         inner.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
 
         tk.Label(inner, text="PARÁMETROS", bg=BG2, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 8))
+                 font=("Segoe UI", 15, "bold")).pack(anchor="w", pady=(0, 8))
 
         self.e_g   = _labeled_entry(inner, "g(x)  — función de iteración",
                                     "sqrt((2*(x+2))/pi)")
@@ -195,7 +195,7 @@ class AitkenApp(tk.Frame):
         for icon, name in self.TABS:
             b = tk.Label(self._tab_bar, text=f"{icon} {name}",
                          bg=BG2, fg=MUTED,
-                         font=("Segoe UI", 10), padx=14, pady=10,
+                         font=("Segoe UI", 13), padx=18, pady=12,
                          cursor="hand2")
             b.pack(side=tk.LEFT)
             b.bind("<Button-1>", lambda e, n=name: self._show_tab(n))
@@ -249,11 +249,11 @@ class AitkenApp(tk.Frame):
         style.theme_use("default")
         style.configure("Dark.Treeview",
                         background=BG2, fieldbackground=BG2,
-                        foreground=TEXT, rowheight=26,
-                        font=("JetBrains Mono", 9))
+                        foreground=TEXT, rowheight=32,
+                        font=("Consolas", 11))
         style.configure("Dark.Treeview.Heading",
                         background=BG3, foreground=MUTED,
-                        font=("Segoe UI", 8, "bold"), relief="flat")
+                        font=("Segoe UI", 15, "bold"), relief="flat")
         style.map("Dark.Treeview",
                   background=[("selected", ACCENT)],
                   foreground=[("selected", "#000")])
@@ -297,12 +297,11 @@ class AitkenApp(tk.Frame):
     def _build_panel_analisis(self):
         f = self._panel("Análisis")
         self._ta = tk.Text(f, bg=BG3, fg=TEXT,
-                           font=("JetBrains Mono", 10),
-                           bd=0, padx=20, pady=16,
+                           font=("Consolas", 12), bd=0, padx=20, pady=16,
                            relief="flat", wrap="word", state="disabled")
         self._ta.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
         self._ta.tag_config("title", foreground=ACCENT,
-                             font=("JetBrains Mono", 10, "bold"))
+                             font=("Consolas", 11, "bold"))
         self._ta.tag_config("ok",   foreground=GREEN)
         self._ta.tag_config("warn", foreground=YELLOW)
         self._ta.tag_config("info", foreground=PURPLE)
@@ -415,7 +414,7 @@ class AitkenApp(tk.Frame):
         cfg.pack(fill=tk.X, padx=12, pady=(12, 8))
 
         tk.Label(cfg, text="Configuración inicial", bg=BG3, fg=TEXT,
-                 font=("Segoe UI", 10, "bold")).pack(
+                 font=("Segoe UI", 15, "bold")).pack(
                      anchor="w", padx=14, pady=(10, 4))
 
         for label, val, col in [
@@ -427,9 +426,9 @@ class AitkenApp(tk.Frame):
             row = tk.Frame(cfg, bg=BG3)
             row.pack(anchor="w", padx=14, pady=1)
             tk.Label(row, text=f"— {label} = ", bg=BG3, fg=MUTED,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
             tk.Label(row, text=val, bg=BG3, fg=col,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
 
         tk.Frame(cfg, bg=BG3, height=8).pack()
 
@@ -452,10 +451,10 @@ class AitkenApp(tk.Frame):
         hdr = tk.Frame(inner, bg=BG2)
         hdr.pack(anchor="w", padx=12, pady=(8, 4))
         tk.Label(hdr, text=f" {r['i']} ", bg=bar_color, fg="#000",
-                 font=("Segoe UI", 8, "bold"), padx=4, pady=1).pack(side=tk.LEFT)
+                 font=("Segoe UI", 15, "bold"), padx=4, pady=1).pack(side=tk.LEFT)
         tk.Label(hdr, text=f"  ·  xₙ = {r['xn']:.8f}",
                  bg=BG2, fg=MUTED,
-                 font=("JetBrains Mono", 8)).pack(side=tk.LEFT)
+                 font=("Consolas", 10)).pack(side=tk.LEFT)
 
         # pasos intermedios del método
         steps = [
@@ -472,25 +471,25 @@ class AitkenApp(tk.Frame):
             row = tk.Frame(inner, bg=BG2)
             row.pack(anchor="w", padx=12, pady=1)
             tk.Label(row, text=pre, bg=BG2, fg=MUTED,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
             tk.Label(row, text=eq,  bg=BG2, fg=TEXT,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
             tk.Label(row, text=val, bg=BG2, fg=col,
-                     font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+                     font=("Consolas", 11, "bold")).pack(side=tk.LEFT)
 
         # error + estado
         err_row = tk.Frame(inner, bg=BG2)
         err_row.pack(anchor="w", padx=12, pady=(1, 8))
         tk.Label(err_row, text="— Error = |x̂ − xₙ| = ",
                  bg=BG2, fg=MUTED,
-                 font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                 font=("Consolas", 11)).pack(side=tk.LEFT)
         tk.Label(err_row, text=f"{r['error']:.2e}",
                  bg=BG2, fg=ORANGE,
-                 font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+                 font=("Consolas", 11, "bold")).pack(side=tk.LEFT)
         est_txt = "  ✔ convergido" if converged else "  → continuar"
         tk.Label(err_row, text=est_txt,
                  bg=BG2, fg=GREEN if converged else YELLOW,
-                 font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+                 font=("Consolas", 11, "bold")).pack(side=tk.LEFT)
 
     # ──────────── RENDER: ANÁLISIS ────────────
     def _render_analisis(self, hist, raiz, tol, gexpr, estado):

@@ -104,18 +104,18 @@ def sugerencias_g(fexpr):
 # ══════════════════════════════════════
 def _labeled_entry(parent, label, default, bg=BG2):
     tk.Label(parent, text=label, bg=bg, fg=MUTED,
-             font=("JetBrains Mono", 8)).pack(anchor="w")
+             font=("Consolas", 10)).pack(anchor="w")
     e = tk.Entry(parent, bg=BG3, fg=TEXT, insertbackground=TEXT,
-                 font=("JetBrains Mono", 10), bd=0,
+                 font=("Consolas", 12), bd=0,
                  highlightthickness=1, highlightbackground=BORDER,
                  highlightcolor=ACCENT, relief="flat")
     e.insert(0, default)
-    e.pack(fill=tk.X, ipady=5, pady=(2, 8))
+    e.pack(fill=tk.X, ipady=7, pady=(2, 8))
     return e
 
 def _btn(parent, text, cmd, color=ACCENT, fg="#000000"):
     b = tk.Label(parent, text=text, bg=color, fg=fg,
-                 font=("Segoe UI", 10, "bold"),
+                 font=("Segoe UI", 15, "bold"),
                  padx=12, pady=7, cursor="hand2")
     b.bind("<Button-1>", lambda e: cmd())
     b.bind("<Enter>",    lambda e: b.config(bg=_darken(color)))
@@ -172,9 +172,9 @@ class PuntoFijoApp(tk.Frame):
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
         tk.Label(bar, text="⚙  Punto Fijo", bg=BG2, fg=TEXT,
-                 font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT, padx=16)
+                 font=("Segoe UI", 15, "bold")).pack(side=tk.LEFT, padx=16)
         tk.Label(bar, text="Método de Punto Fijo  |  x = g(x)", bg=BG2, fg=MUTED,
-                 font=("Segoe UI", 9)).pack(side=tk.RIGHT, padx=16)
+                 font=("Segoe UI", 11)).pack(side=tk.RIGHT, padx=16)
 
     def _sidebar(self, parent):
         sb = tk.Frame(parent, bg=BG2, width=280)
@@ -185,22 +185,22 @@ class PuntoFijoApp(tk.Frame):
         inner.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
 
         tk.Label(inner, text="PARÁMETROS", bg=BG2, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 8))
+                 font=("Segoe UI", 15, "bold")).pack(anchor="w", pady=(0, 8))
 
         self.e_f   = _labeled_entry(inner, "f(x)",           "2**(-x) - x")
 
         # g(x) con botón sugerir
         tk.Label(inner, text="g(x)  — función de iteración",
-                 bg=BG2, fg=MUTED, font=("JetBrains Mono", 8)).pack(anchor="w")
+                 bg=BG2, fg=MUTED, font=("Consolas", 10)).pack(anchor="w")
         g_row = tk.Frame(inner, bg=BG2)
         g_row.pack(fill=tk.X, pady=(2, 8))
 
         self.e_g = tk.Entry(g_row, bg=BG3, fg=TEXT, insertbackground=TEXT,
-                            font=("JetBrains Mono", 10), bd=0,
+                            font=("Consolas", 12), bd=0,
                             highlightthickness=1, highlightbackground=BORDER,
                             highlightcolor=ACCENT, relief="flat")
         self.e_g.insert(0, "2**(-x)")
-        self.e_g.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5)
+        self.e_g.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=7)
 
         sug_btn = tk.Label(g_row, text=" ✨ ", bg=BG3, fg=MUTED,
                            font=("Segoe UI", 11), cursor="hand2",
@@ -234,8 +234,8 @@ class PuntoFijoApp(tk.Frame):
         for icon, name in self.TABS:
             b = tk.Label(self._tab_bar, text=f"{icon} {name}",
                          bg=BG2, fg=MUTED,
-                         font=("Segoe UI", 10),
-                         padx=14, pady=10, cursor="hand2")
+                         font=("Segoe UI", 13),
+                         padx=14, pady=12, cursor="hand2")
             b.pack(side=tk.LEFT)
             b.bind("<Button-1>", lambda e, n=name: self._show_tab(n))
             self._tab_btns[name] = b
@@ -292,11 +292,11 @@ class PuntoFijoApp(tk.Frame):
         style.theme_use("default")
         style.configure("Dark.Treeview",
                         background=BG2, fieldbackground=BG2,
-                        foreground=TEXT, rowheight=26,
-                        font=("JetBrains Mono", 9))
+                        foreground=TEXT, rowheight=32,
+                        font=("Consolas", 11))
         style.configure("Dark.Treeview.Heading",
                         background=BG3, foreground=MUTED,
-                        font=("Segoe UI", 8, "bold"), relief="flat")
+                        font=("Segoe UI", 15, "bold"), relief="flat")
         style.map("Dark.Treeview",
                   background=[("selected", ACCENT)],
                   foreground=[("selected", "#000")])
@@ -351,14 +351,13 @@ class PuntoFijoApp(tk.Frame):
         f = self._panel("Análisis")
         self._txt_analisis = tk.Text(
             f, bg=BG3, fg=TEXT,
-            font=("JetBrains Mono", 10),
-            bd=0, padx=20, pady=16,
+            font=("Consolas", 12), bd=0, padx=20, pady=16,
             relief="flat", wrap="word",
             state="disabled")
         self._txt_analisis.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
 
         ta = self._txt_analisis
-        ta.tag_config("title",  foreground=ACCENT,  font=("JetBrains Mono", 10, "bold"))
+        ta.tag_config("title",  foreground=ACCENT,  font=("Consolas", 11, "bold"))
         ta.tag_config("ok",     foreground=GREEN)
         ta.tag_config("warn",   foreground=YELLOW)
         ta.tag_config("err",    foreground=RED)
@@ -485,7 +484,7 @@ class PuntoFijoApp(tk.Frame):
         cfg.pack(fill=tk.X, padx=12, pady=(12, 8))
 
         tk.Label(cfg, text="Configuración inicial", bg=BG3, fg=TEXT,
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=14, pady=(10, 4))
+                 font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=14, pady=(10, 4))
 
         for label, val, col in [
             ("f(x)",           fexpr,                    ACCENT),
@@ -498,9 +497,9 @@ class PuntoFijoApp(tk.Frame):
             row = tk.Frame(cfg, bg=BG3)
             row.pack(anchor="w", padx=14, pady=1)
             tk.Label(row, text=f"— {label} = ", bg=BG3, fg=MUTED,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
             tk.Label(row, text=val, bg=BG3, fg=col,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
 
         tk.Frame(cfg, bg=BG3, height=8).pack()
 
@@ -526,14 +525,14 @@ class PuntoFijoApp(tk.Frame):
         hdr.pack(anchor="w", padx=12, pady=(8, 4))
 
         num_lbl = tk.Label(hdr, text=f" {r['i']} ", bg=bar_color,
-                           fg="#000", font=("Segoe UI", 8, "bold"),
+                           fg="#000", font=("Segoe UI", 15, "bold"),
                            padx=4, pady=1)
         num_lbl.pack(side=tk.LEFT)
 
         tk.Label(hdr,
                  text=f"  ·  x_n = {r['xn']:.8f}",
                  bg=BG2, fg=MUTED,
-                 font=("JetBrains Mono", 8)).pack(side=tk.LEFT)
+                 font=("Consolas", 10)).pack(side=tk.LEFT)
 
         # líneas de cálculo
         lines = [
@@ -546,24 +545,24 @@ class PuntoFijoApp(tk.Frame):
             row = tk.Frame(inner, bg=BG2)
             row.pack(anchor="w", padx=12, pady=1)
             tk.Label(row, text=pre, bg=BG2, fg=MUTED,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
             tk.Label(row, text=eq,  bg=BG2, fg=TEXT,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
             tk.Label(row, text=val, bg=BG2, fg=col,
-                     font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+                     font=("Consolas", 11, "bold")).pack(side=tk.LEFT)
 
         # error + estado
         err_row = tk.Frame(inner, bg=BG2)
         err_row.pack(anchor="w", padx=12, pady=(1, 8))
         tk.Label(err_row, text="— Error = |x_{n+1} − x_n| = ", bg=BG2, fg=MUTED,
-                 font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                 font=("Consolas", 11)).pack(side=tk.LEFT)
         tk.Label(err_row, text=f"{r['error']:.2e}", bg=BG2, fg=ORANGE,
-                 font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+                 font=("Consolas", 11, "bold")).pack(side=tk.LEFT)
 
         estado_text  = "  ✔ convergido" if converged else "  → continuar"
         estado_color = GREEN           if converged else YELLOW
         tk.Label(err_row, text=estado_text, bg=BG2, fg=estado_color,
-                 font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+                 font=("Consolas", 11, "bold")).pack(side=tk.LEFT)
 
     # ──────────── RENDER: ANÁLISIS ────────────
     def _render_analisis(self, hist, raiz, tol, fexpr, gexpr, x0, converged):
@@ -612,7 +611,7 @@ class PuntoFijoApp(tk.Frame):
         top.geometry(f"+{event.x_root}+{event.y_root + 8}")
 
         tk.Label(top, text="  Sugerencias de g(x)", bg=BG2, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=8, pady=(8, 4))
+                 font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=8, pady=(8, 4))
 
         for expr, desc in sugs:
             row = tk.Frame(top, bg=BG2, cursor="hand2")
@@ -621,10 +620,10 @@ class PuntoFijoApp(tk.Frame):
             row.bind("<Leave>", lambda e, r=row: r.config(bg=BG2))
 
             tk.Label(row, text=expr, bg=BG2, fg=ACCENT,
-                     font=("JetBrains Mono", 9),
+                     font=("Consolas", 11),
                      padx=8, pady=4).pack(anchor="w")
             tk.Label(row, text=f"  {desc}", bg=BG2, fg=MUTED,
-                     font=("Segoe UI", 8), pady=0).pack(anchor="w", padx=8)
+                     font=("Segoe UI", 13), pady=0).pack(anchor="w", padx=8)
 
             def on_click(e=expr, w=top):
                 self.e_g.delete(0, tk.END)

@@ -22,11 +22,11 @@ YELLOW  = "#d29922"
 PURPLE  = "#bc8cff"
 ORANGE  = "#f0883e"
 
-MONO  = ("JetBrains Mono", 10)
+MONO  = ("Consolas", 11)
 MONO_S= ("JetBrains Mono",  9)
-SANS  = ("Segoe UI", 10)
+SANS  = ("Segoe UI", 13)
 SANS_B= ("Segoe UI", 11, "bold")
-SANS_T= ("Segoe UI", 13, "bold")
+SANS_T= ("Segoe UI", 15, "bold")
 
 
 # ══════════════════════════════════════
@@ -94,18 +94,18 @@ def analisis_biseccion(hist, raiz, tol, fexpr):
 # ══════════════════════════════════════
 def _labeled_entry(parent, label, default, bg=BG2):
     tk.Label(parent, text=label, bg=bg, fg=MUTED,
-             font=("JetBrains Mono", 8)).pack(anchor="w")
+             font=("Consolas", 10)).pack(anchor="w")
     e = tk.Entry(parent, bg=BG3, fg=TEXT, insertbackground=TEXT,
-                 font=("JetBrains Mono", 10), bd=0,
+                 font=("Consolas", 12), bd=0,
                  highlightthickness=1, highlightbackground=BORDER,
                  highlightcolor=ACCENT, relief="flat")
     e.insert(0, default)
-    e.pack(fill=tk.X, ipady=5, pady=(2, 8))
+    e.pack(fill=tk.X, ipady=7, pady=(2, 8))
     return e
 
 def _btn(parent, text, cmd, color=ACCENT, fg="#000000"):
     b = tk.Label(parent, text=text, bg=color, fg=fg,
-                 font=("Segoe UI", 10, "bold"),
+                 font=("Segoe UI", 15, "bold"),
                  padx=12, pady=7, cursor="hand2")
     b.bind("<Button-1>", lambda e: cmd())
     b.bind("<Enter>",    lambda e: b.config(bg=_darken(color)))
@@ -162,9 +162,9 @@ class BiseccionApp(tk.Frame):
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
         tk.Label(bar, text="⚙  Bisección", bg=BG2, fg=TEXT,
-                 font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT, padx=16)
+                 font=("Segoe UI", 15, "bold")).pack(side=tk.LEFT, padx=16)
         tk.Label(bar, text="Método de Bisección", bg=BG2, fg=MUTED,
-                 font=("Segoe UI", 9)).pack(side=tk.RIGHT, padx=16)
+                 font=("Segoe UI", 11)).pack(side=tk.RIGHT, padx=16)
 
     def _sidebar(self, parent):
         sb = tk.Frame(parent, bg=BG2, width=260)
@@ -175,7 +175,7 @@ class BiseccionApp(tk.Frame):
         inner.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
 
         tk.Label(inner, text="PARÁMETROS", bg=BG2, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 8))
+                 font=("Segoe UI", 15, "bold")).pack(anchor="w", pady=(0, 8))
 
         self.e_f   = _labeled_entry(inner, "f(x)",          "x**2 - 2")
         self.e_a   = _labeled_entry(inner, "a  (extremo izq)", "0")
@@ -205,8 +205,8 @@ class BiseccionApp(tk.Frame):
         for icon, name in self.TABS:
             b = tk.Label(self._tab_bar, text=f"{icon} {name}",
                          bg=BG2, fg=MUTED,
-                         font=("Segoe UI", 10),
-                         padx=14, pady=10, cursor="hand2")
+                         font=("Segoe UI", 13),
+                         padx=14, pady=12, cursor="hand2")
             b.pack(side=tk.LEFT)
             b.bind("<Button-1>", lambda e, n=name: self._show_tab(n))
             self._tab_btns[name] = b
@@ -269,11 +269,11 @@ class BiseccionApp(tk.Frame):
         style.theme_use("default")
         style.configure("Dark.Treeview",
                         background=BG2, fieldbackground=BG2,
-                        foreground=TEXT, rowheight=26,
-                        font=("JetBrains Mono", 9))
+                        foreground=TEXT, rowheight=32,
+                        font=("Consolas", 11))
         style.configure("Dark.Treeview.Heading",
                         background=BG3, foreground=MUTED,
-                        font=("Segoe UI", 8, "bold"), relief="flat")
+                        font=("Segoe UI", 15, "bold"), relief="flat")
         style.map("Dark.Treeview",
                   background=[("selected", ACCENT)],
                   foreground=[("selected", "#000")])
@@ -328,20 +328,19 @@ class BiseccionApp(tk.Frame):
         f = self._panel("Análisis")
         self._txt_analisis = tk.Text(
             f, bg=BG3, fg=TEXT,
-            font=("JetBrains Mono", 10),
-            bd=0, padx=20, pady=16,
+            font=("Consolas", 12), bd=0, padx=20, pady=16,
             relief="flat", wrap="word",
             state="disabled")
         self._txt_analisis.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
 
         # tags de color
         ta = self._txt_analisis
-        ta.tag_config("title",  foreground=ACCENT,  font=("JetBrains Mono", 10, "bold"))
+        ta.tag_config("title",  foreground=ACCENT,  font=("Consolas", 11, "bold"))
         ta.tag_config("ok",     foreground=GREEN)
         ta.tag_config("warn",   foreground=YELLOW)
         ta.tag_config("info",   foreground=PURPLE)
         ta.tag_config("muted",  foreground=MUTED)
-        ta.tag_config("bold",   font=("JetBrains Mono", 10, "bold"))
+        ta.tag_config("bold",   font=("Consolas", 11, "bold"))
 
     # ──────────── MATPLOTLIB STYLE ────────────
     def _style_ax(self, ax):
@@ -451,7 +450,7 @@ class BiseccionApp(tk.Frame):
         cfg.pack(fill=tk.X, padx=12, pady=(12, 8))
 
         tk.Label(cfg, text="Configuración inicial", bg=BG3, fg=TEXT,
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=14, pady=(10, 4))
+                 font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=14, pady=(10, 4))
 
         for line, val in [
             ("f(x)", fexpr),
@@ -462,9 +461,9 @@ class BiseccionApp(tk.Frame):
             row = tk.Frame(cfg, bg=BG3)
             row.pack(anchor="w", padx=14, pady=1)
             tk.Label(row, text=f"— {line} = ", bg=BG3, fg=MUTED,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
             tk.Label(row, text=val, bg=BG3, fg=ACCENT,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
 
         tk.Frame(cfg, bg=BG3, height=8).pack()
 
@@ -491,14 +490,14 @@ class BiseccionApp(tk.Frame):
         hdr.pack(anchor="w", padx=12, pady=(8, 4))
 
         num_lbl = tk.Label(hdr, text=f" {r['i']} ", bg=bar_color,
-                           fg="#000", font=("Segoe UI", 8, "bold"),
+                           fg="#000", font=("Segoe UI", 15, "bold"),
                            padx=4, pady=1)
         num_lbl.pack(side=tk.LEFT)
 
         tk.Label(hdr,
                  text=f"  ·  a = {r['a']:.6f}   |   b = {r['b']:.6f}",
                  bg=BG2, fg=MUTED,
-                 font=("JetBrains Mono", 8)).pack(side=tk.LEFT)
+                 font=("Consolas", 10)).pack(side=tk.LEFT)
 
         lines = [
             (f"— c = ({r['a']:.6f} + {r['b']:.6f}) / 2", "=",
@@ -511,30 +510,30 @@ class BiseccionApp(tk.Frame):
             row = tk.Frame(inner, bg=BG2)
             row.pack(anchor="w", padx=12, pady=1)
             tk.Label(row, text=pre, bg=BG2, fg=MUTED,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
             tk.Label(row, text=eq,  bg=BG2, fg=TEXT,
-                     font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                     font=("Consolas", 11)).pack(side=tk.LEFT)
             tk.Label(row, text=val, bg=BG2, fg=col,
-                     font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+                     font=("Consolas", 11, "bold")).pack(side=tk.LEFT)
 
         # error + estado
         err_row = tk.Frame(inner, bg=BG2)
         err_row.pack(anchor="w", padx=12, pady=(1, 4))
         tk.Label(err_row, text="— Error = |b − a| / 2 = ", bg=BG2, fg=MUTED,
-                 font=("JetBrains Mono", 9)).pack(side=tk.LEFT)
+                 font=("Consolas", 11)).pack(side=tk.LEFT)
         tk.Label(err_row, text=f"{r['error']:.2e}", bg=BG2, fg=ORANGE,
-                 font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+                 font=("Consolas", 11, "bold")).pack(side=tk.LEFT)
 
         estado_text  = "  ✔ convergido" if converged else "  → continuar"
         estado_color = GREEN           if converged else YELLOW
         tk.Label(err_row, text=estado_text, bg=BG2, fg=estado_color,
-                 font=("JetBrains Mono", 9, "bold")).pack(side=tk.LEFT)
+                 font=("Consolas", 11, "bold")).pack(side=tk.LEFT)
 
         # subintervalo siguiente
         next_txt = "→ b ← c  (raíz en [a, c])" if r["fa"]*r["fc"] < 0 \
                    else "→ a ← c  (raíz en [c, b])"
         tk.Label(inner, text=next_txt, bg=BG2, fg=MUTED,
-                 font=("JetBrains Mono", 8)).pack(anchor="w", padx=12, pady=(0, 8))
+                 font=("Consolas", 10)).pack(anchor="w", padx=12, pady=(0, 8))
 
     # ──────────── RENDER: ANÁLISIS ────────────
     def _render_analisis(self, hist, raiz, tol, fexpr, converged):
