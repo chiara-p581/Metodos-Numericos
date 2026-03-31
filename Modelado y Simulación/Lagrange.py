@@ -7,16 +7,18 @@ Referencia: Caceres, O. J. — Fundamentos de Modelado y Simulacion, 2 ed. 2026
 Pestanas:
   1. Grafico
   2. Tabla L_i
-  3. Paso a paso    — construccion completa del polinomio
+  3. Paso a paso    — construccion simbolica estilo cuaderno
   4. Error Local    — |f(x) - P(x)| en un punto dado
-  5. Error Global   — cota teorica segun Caceres pag. 21-22
+  5. Error Global   — cota teorica con hallar max omega via g'(x)=0
   6. Analisis
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox
 import math
+import re
 import numpy as np
+import sympy as sp
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
@@ -36,10 +38,13 @@ RED    = "#f85149"
 YELLOW = "#d29922"
 PURPLE = "#bc8cff"
 ORANGE = "#f0883e"
+TEAL   = "#39d0d8"
+
+_x = sp.Symbol("x")
 
 
 # ══════════════════════════════════════
-# LOGICA — LAGRANGE  (Caceres pag. 20-23)
+# ENTORNO DE EVALUACION
 # ══════════════════════════════════════
 def _math_env(x_val=None):
     env = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
@@ -51,50 +56,21 @@ def _math_env(x_val=None):
 def evaluar_expr(expr, x_val):
     return eval(expr, {"__builtins__": {}}, _math_env(x_val))
 
-def base_lagrange(i, x, xs):
-    """L_i(x) = prod_{j!=i} (x-x_j)/(x_i-x_j)  —  Caceres pag.20"""
+
+# ══════════════════════════════════════
+# LOGICA NUMERICA — LAGRANGE
+# ══════════════════════════════════════
+def base_lagrange(i, x_val, xs):
     li = 1.0
     for j in range(len(xs)):
         if j != i:
-            li *= (x - xs[j]) / (xs[i] - xs[j])
+            li *= (x_val - xs[j]) / (xs[i] - xs[j])
     return li
 
-def polinomio_lagrange(x, xs, ys):
-    """P(x) = sum y_i * L_i(x)  —  Caceres pag.20"""
-    return sum(float(ys[i]) * base_lagrange(i, x, xs) for i in range(len(xs)))
+def polinomio_lagrange(x_val, xs, ys):
+    return sum(float(ys[i]) * base_lagrange(i, x_val, xs) for i in range(len(xs)))
 
-def reconstruir_poly1d(xs, ys):
-    """Devuelve np.poly1d con coeficientes del polinomio."""
-    n    = len(xs)
-    poly = np.poly1d([0.0])
-    for i in range(n):
-        li = np.poly1d([1.0])
-        for j in range(n):
-            if j != i:
-                li = li * np.poly1d([1.0, -float(xs[j])]) / (float(xs[i]) - float(xs[j]))
-        poly = poly + float(ys[i]) * li
-    return poly
-
-def derivada_numerica(expr, x, orden=1, h=1e-5):
-    """Derivada numerica de orden 1..5 en el punto x."""
-    f = lambda v: evaluar_expr(expr, v)
-    for _ in range(orden):
-        fx = lambda v, fn=f: (fn(v+h) - fn(v-h)) / (2*h)
-        f  = fx
-    return f(x)
-
-def max_derivada_intervalo(expr, orden, a, b, puntos=500):
-    """Busca max |f^(n+1)(x)| en [a,b] numericamente."""
-    xs_scan = np.linspace(a, b, puntos)
-    vals = []
-    for xi in xs_scan:
-        try:
-            vals.append(abs(derivada_numerica(expr, xi, orden)))
-        except Exception:
-            pass
-    return max(vals) if vals else float("nan")
-
-def tabla_li(xs, ys, x_eval):
+def tabla_li_numerica(xs, ys, x_eval):
     rows  = []
     total = 0.0
     for i in range(len(xs)):
@@ -104,6 +80,153 @@ def tabla_li(xs, ys, x_eval):
         rows.append({"i": i, "xi": float(xs[i]), "yi": float(ys[i]),
                      "Li": li, "yiLi": contrib})
     return rows, total
+
+
+# ══════════════════════════════════════
+# LOGICA SIMBOLICA — LAGRANGE
+# ══════════════════════════════════════
+def li_simbolico(i, xs_vals):
+    n = len(xs_vals)
+    xi = xs_vals[i]
+    num = sp.Integer(1)
+    den_val = 1.0
+    num_parts = []
+    den_parts = []
+    for j in range(n):
+        if j != i:
+            num      *= (_x - xs_vals[j])
+            den_val  *= (xi - xs_vals[j])
+            xj_str = _fmt_num(xs_vals[j])
+            xi_str = _fmt_num(xi)
+            num_parts.append(f"(x - {xj_str})")
+            den_parts.append(f"({xi_str} - {xj_str})")
+    li_expr = sp.expand(num / den_val)
+    return {
+        "num_expr":  num,
+        "den_val":   den_val,
+        "li_expr":   li_expr,
+        "num_expanded": sp.expand(num),
+        "num_parts": num_parts,
+        "den_parts": den_parts,
+    }
+
+def construir_Px_simbolico(xs_vals, ys_vals):
+    Px = sp.Integer(0)
+    terminos = []
+    for i in range(len(xs_vals)):
+        r = li_simbolico(i, xs_vals)
+        yi = ys_vals[i]
+        yi_sp = sp.Rational(yi).limit_denominator(1000) if abs(yi - round(yi)) < 1e-9 else float(yi)
+        termino = yi_sp * r["li_expr"]
+        terminos.append({
+            **r,
+            "i": i,
+            "xi": xs_vals[i],
+            "yi": yi,
+            "yi_sp": yi_sp,
+            "termino": termino,
+            "termino_expanded": sp.expand(termino),
+        })
+        Px += termino
+    Px_exp = sp.expand(Px)
+    return terminos, Px_exp
+
+def _fmt_num(v):
+    if abs(v - round(v)) < 1e-9:
+        return str(int(round(v)))
+    return f"{v:.4f}"
+
+def _sympy_to_str(expr):
+    s = str(expr)
+    s = s.replace("**", "^")
+    return s
+
+def _poly_to_str(expr):
+    try:
+        p = sp.Poly(expr, _x)
+        coefs = p.all_coeffs()
+        grado = p.degree()
+        terms = []
+        for k, c in enumerate(coefs):
+            exp = grado - k
+            cv  = float(c)
+            if abs(cv) < 1e-10:
+                continue
+            if exp == 0:
+                terms.append(f"{cv:+.4f}")
+            elif exp == 1:
+                terms.append(f"{cv:+.4f}x")
+            else:
+                terms.append(f"{cv:+.4f}x^{exp}")
+        if not terms:
+            return "0"
+        s = "  ".join(terms)
+        if s.startswith("+"):
+            s = s[1:].strip()
+        return s
+    except Exception:
+        return _sympy_to_str(sp.expand(expr))
+
+def derivada_numerica_orden(expr, x_val, orden, h=1e-5):
+    f = lambda v: evaluar_expr(expr, v)
+    for _ in range(orden):
+        fn = f
+        f  = lambda v, fn=fn: (fn(v+h) - fn(v-h)) / (2*h)
+    return f(x_val)
+
+def max_derivada_intervalo(expr, orden, a, b, puntos=300):
+    xs = np.linspace(a, b, puntos)
+    vals = []
+    for xi in xs:
+        try:
+            vals.append(abs(derivada_numerica_orden(expr, xi, orden)))
+        except Exception:
+            pass
+    return max(vals) if vals else float("nan")
+
+def hallar_max_omega(xs_vals, a, b):
+    omega = sp.Integer(1)
+    for xi in xs_vals:
+        xi_r = sp.Rational(xi).limit_denominator(1000) if abs(xi - round(xi)) < 1e-9 else xi
+        omega *= (_x - xi_r)
+    omega_exp = sp.expand(omega)
+    domega    = sp.diff(omega_exp, _x)
+    domega_s  = sp.simplify(domega)
+
+    try:
+        crit_sym = sp.solve(domega, _x)
+        criticos = []
+        for c in crit_sym:
+            try:
+                cv = float(c.evalf())
+                if a - 1e-9 <= cv <= b + 1e-9:
+                    criticos.append(cv)
+            except Exception:
+                pass
+    except Exception:
+        criticos = []
+
+    puntos = [float(a), float(b)] + criticos
+    evals  = []
+    for pt in puntos:
+        try:
+            v = abs(float(omega_exp.subs(_x, pt).evalf()))
+            evals.append((pt, v))
+        except Exception:
+            pass
+
+    max_pt, max_val = max(evals, key=lambda e: e[1]) if evals else (a, 0.0)
+
+    return {
+        "omega_expr":  _poly_to_str(omega_exp),
+        "domega_expr": _poly_to_str(domega_s),
+        "omega_sym":   omega_exp,
+        "domega_sym":  domega_s,
+        "criticos":    criticos,
+        "evals":       evals,
+        "max_pt":      max_pt,
+        "max_omega":   max_val,
+    }
 
 
 # ══════════════════════════════════════
@@ -128,7 +251,7 @@ def _labeled_entry(parent, label, default):
 
 def _btn(parent, text, cmd, color=ACCENT, fg="#000"):
     b = tk.Label(parent, text=text, bg=color, fg=fg,
-                 font=("Segoe UI", 13, "bold"),
+                 font=("Segoe UI", 12, "bold"),
                  padx=12, pady=8, cursor="hand2")
     b.bind("<Button-1>", lambda e: cmd())
     b.bind("<Enter>",    lambda e: b.config(bg=_dk(color)))
@@ -140,12 +263,11 @@ def _dk(h):
     return "#{:02x}{:02x}{:02x}".format(
         max(0,int(r*.8)), max(0,int(g*.8)), max(0,int(b*.8)))
 
-def _scrollable_frame(parent):
-    """Devuelve (canvas, inner_frame) con scroll vertical."""
-    wrap = tk.Frame(parent, bg=BG)
+def _scrollable(parent):
+    wrap  = tk.Frame(parent, bg=BG)
     wrap.pack(fill=tk.BOTH, expand=True)
-    sc  = tk.Canvas(wrap, bg=BG, highlightthickness=0)
-    vsb = tk.Scrollbar(wrap, orient="vertical", command=sc.yview)
+    sc    = tk.Canvas(wrap, bg=BG, highlightthickness=0)
+    vsb   = tk.Scrollbar(wrap, orient="vertical", command=sc.yview)
     sc.configure(yscrollcommand=vsb.set)
     vsb.pack(side=tk.RIGHT, fill=tk.Y)
     sc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -157,50 +279,93 @@ def _scrollable_frame(parent):
         lambda e: sc.itemconfig(win, width=e.width))
     sc.bind_all("<MouseWheel>",
         lambda e: sc.yview_scroll(int(-1*(e.delta/120)), "units"))
-    return sc, inner
+    return inner
 
 
 # ══════════════════════════════════════
-# BLOQUES VISUALES REUTILIZABLES
+# BLOQUES VISUALES ESTILO CUADERNO
 # ══════════════════════════════════════
 def _seccion(parent, titulo, color=ACCENT):
-    """Titulo de seccion con linea de color."""
     f = tk.Frame(parent, bg=BG)
-    f.pack(fill=tk.X, padx=12, pady=(14, 4))
+    f.pack(fill=tk.X, padx=10, pady=(14, 4))
     tk.Frame(f, bg=color, width=4).pack(side=tk.LEFT, fill=tk.Y)
     tk.Label(f, text=f"  {titulo}", bg=BG, fg=color,
              font=("Segoe UI", 13, "bold")).pack(side=tk.LEFT, padx=4)
-    return f
 
 def _card(parent, color=ACCENT):
-    """Card con barra lateral de color."""
     outer = tk.Frame(parent, bg=BG)
-    outer.pack(fill=tk.X, padx=12, pady=4)
+    outer.pack(fill=tk.X, padx=10, pady=4)
     tk.Frame(outer, bg=color, width=3).pack(side=tk.LEFT, fill=tk.Y)
     inner = tk.Frame(outer, bg=BG2)
     inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     return inner
 
-def _linea(parent, label, valor, color_val=ACCENT, mono=True):
-    """Fila: label = valor."""
+def _c_titulo(parent, texto, color=TEAL):
+    f = tk.Frame(parent, bg=BG2)
+    f.pack(fill=tk.X, padx=14, pady=(10, 2))
+    tk.Label(f, text=texto, bg=BG2, fg=color,
+             font=("Consolas", 12, "bold", "underline")).pack(anchor="w")
+
+def _c_texto(parent, texto, color=MUTED, indent=0):
+    prefix = "   " * indent
+    tk.Label(parent, text=prefix+texto, bg=BG2, fg=color,
+             font=("Consolas", 12), justify="left", anchor="w").pack(
+                 fill=tk.X, padx=18, pady=1)
+
+def _c_formula(parent, texto, color=TEXT, indent=1):
+    prefix = "   " * indent
+    tk.Label(parent, text=prefix+texto, bg=BG2, fg=color,
+             font=("Consolas", 12), justify="left", anchor="w").pack(
+                 fill=tk.X, padx=18, pady=1)
+
+def _c_fraccion(parent, num_str, den_str, color_num=TEXT, color_den=MUTED, indent=2):
+    prefix = "   " * indent
+    ancho  = max(len(num_str), len(den_str)) + 4
+    linea  = "─" * ancho
+    for txt, col in [(prefix + num_str, color_num),
+                     (prefix + linea,   BORDER),
+                     (prefix + den_str, color_den)]:
+        tk.Label(parent, text=txt, bg=BG2, fg=col,
+                 font=("Consolas", 12), justify="left", anchor="w").pack(
+                     fill=tk.X, padx=18, pady=0)
+
+def _c_igual(parent, izq, der, color_der=GREEN, indent=2):
+    prefix = "   " * indent
     row = tk.Frame(parent, bg=BG2)
-    row.pack(anchor="w", padx=14, pady=2)
-    font = ("Consolas", 11) if mono else ("Segoe UI", 11)
-    tk.Label(row, text=label, bg=BG2, fg=MUTED, font=font).pack(side=tk.LEFT)
-    tk.Label(row, text=valor, bg=BG2, fg=color_val,
-             font=(font[0], font[1], "bold")).pack(side=tk.LEFT)
+    row.pack(anchor="w", padx=18, pady=2)
+    tk.Label(row, text=prefix+izq+" = ", bg=BG2, fg=MUTED,
+             font=("Consolas", 12)).pack(side=tk.LEFT)
+    tk.Label(row, text=der, bg=BG2, fg=color_der,
+             font=("Consolas", 12, "bold")).pack(side=tk.LEFT)
 
-def _badge(parent, texto, color):
-    tk.Label(parent, text=f" {texto} ", bg=color, fg="#000",
-             font=("Segoe UI", 10, "bold"), padx=6, pady=2).pack(
-                 side=tk.LEFT, padx=(0, 8))
+def _c_resultado_box(parent, texto, color=GREEN):
+    f = tk.Frame(parent, bg=color, padx=2, pady=2)
+    f.pack(fill=tk.X, padx=20, pady=6)
+    inner = tk.Frame(f, bg=BG3)
+    inner.pack(fill=tk.BOTH)
+    tk.Label(inner, text="  " + texto, bg=BG3, fg=color,
+             font=("Consolas", 13, "bold"), padx=10, pady=6).pack(anchor="w")
 
-def _espacio(parent, h=8):
+def _c_sep(parent):
+    tk.Frame(parent, bg=BORDER, height=1).pack(fill=tk.X, padx=16, pady=6)
+
+def _espacio(parent, h=6):
     tk.Frame(parent, bg=BG2, height=h).pack()
+
+# ── aviso informativo (no es error, solo info) ──
+def _c_aviso(parent, texto, color=YELLOW):
+    f = tk.Frame(parent, bg=BG)
+    f.pack(fill=tk.X, padx=10, pady=8)
+    tk.Frame(f, bg=color, width=3).pack(side=tk.LEFT, fill=tk.Y)
+    inner = tk.Frame(f, bg=BG2)
+    inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    tk.Label(inner, text="  ℹ  " + texto, bg=BG2, fg=color,
+             font=("Consolas", 11), justify="left", anchor="w",
+             padx=10, pady=10).pack(anchor="w")
 
 
 # ══════════════════════════════════════
-# CLASE PRINCIPAL
+# CLASE PRINCIPAL — LAGRANGE
 # ══════════════════════════════════════
 class LagrangeApp(tk.Frame):
 
@@ -218,13 +383,15 @@ class LagrangeApp(tk.Frame):
         if standalone:
             master.title("Lagrange — Metodos Numericos")
             master.configure(bg=BG)
-            master.geometry("1340x740")
-            master.minsize(1050, 600)
-        self._poly   = None
-        self._xs     = np.array([])
-        self._ys     = np.array([])
-        self._x_eval = 0.0
-        self._px     = 0.0
+            master.geometry("1360x760")
+            master.minsize(1080, 620)
+        self._poly    = None
+        self._xs      = np.array([])
+        self._ys      = np.array([])
+        self._x_eval  = None
+        self._px      = None
+        self._Px_sym  = None
+        self._terminos = []
         self._build()
 
     # ──────────── LAYOUT ────────────
@@ -248,7 +415,7 @@ class LagrangeApp(tk.Frame):
                  font=("Segoe UI", 11)).pack(side=tk.RIGHT, padx=16)
 
     def _sidebar(self, parent):
-        sb = tk.Frame(parent, bg=BG2, width=350)
+        sb = tk.Frame(parent, bg=BG2, width=360)
         sb.pack(side=tk.LEFT, fill=tk.Y)
         sb.pack_propagate(False)
         inner = tk.Frame(sb, bg=BG2)
@@ -258,15 +425,16 @@ class LagrangeApp(tk.Frame):
              font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(0, 4))
         _lbl(inner, "Acepta: numeros, pi, e, sqrt(2), sin(pi/2)...").pack(anchor="w")
 
-        self.e_xs   = _labeled_entry(inner, "x_i  (separados por coma)", "0, 1, 2, 3, 4")
-        self.e_ys   = _labeled_entry(inner, "y_i  (separados por coma)", "1, 2, 0, 2, 3")
+        self.e_xs = _labeled_entry(inner, "x_i  (separados por coma)", "0, 1, 2, 3, 4")
+        self.e_ys = _labeled_entry(inner, "y_i  (separados por coma)", "1, 2, 0, 2, 3")
 
         tk.Frame(inner, bg=BORDER, height=1).pack(fill=tk.X, pady=4)
-        _lbl(inner, "EVALUAR EN", fg=MUTED,
-             font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(4, 4))
-        self.e_xeval = _labeled_entry(inner, "x a evaluar  P(x)", "1.5")
+        _lbl(inner, "EVALUAR EN  (opcional)", fg=MUTED,
+             font=("Segoe UI", 13, "bold")).pack(anchor="w", pady=(4, 2))
+        _lbl(inner, "Dejar vacio para solo construir P(x)").pack(anchor="w")
+        self.e_xeval = _labeled_entry(inner, "x a evaluar  P(x*)  — opcional", "")
 
-        _lbl(inner, "f(x) real  —  necesaria para calcular errores").pack(anchor="w")
+        _lbl(inner, "f(x) real  —  para calcular errores  (opcional)").pack(anchor="w")
         self.e_fx = _entry(inner, "")
         self.e_fx.pack(fill=tk.X, ipady=7, pady=(2, 8))
 
@@ -319,7 +487,7 @@ class LagrangeApp(tk.Frame):
         self._tab_frames[name] = f
         return f
 
-    # ──────────── PANEL: GRAFICO ────────────
+    # ──────────── PANELES ────────────
     def _build_panel_grafico(self):
         f = self._panel("Grafico")
         self._fig = Figure(figsize=(8, 5), facecolor=BG)
@@ -328,7 +496,6 @@ class LagrangeApp(tk.Frame):
         self._canvas = FigureCanvasTkAgg(self._fig, master=f)
         self._canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    # ──────────── PANEL: TABLA ────────────
     def _build_panel_tabla(self):
         f = self._panel("Tabla")
         style = ttk.Style()
@@ -343,10 +510,10 @@ class LagrangeApp(tk.Frame):
         style.map("Dark.Treeview",
                   background=[("selected", ACCENT)],
                   foreground=[("selected", "#000")])
-        cols = ("i", "x_i", "y_i", "L_i(x)", "y_i * L_i(x)")
+        cols = ("i", "x_i", "y_i", "L_i(x) en x*", "y_i*L_i")
         self._tree = ttk.Treeview(f, columns=cols, show="headings",
                                    style="Dark.Treeview")
-        for col, w in zip(cols, [50, 130, 130, 160, 160]):
+        for col, w in zip(cols, [50, 120, 120, 160, 160]):
             self._tree.heading(col, text=col)
             self._tree.column(col, width=w, anchor="e")
         sb = ttk.Scrollbar(f, orient="vertical", command=self._tree.yview)
@@ -354,22 +521,18 @@ class LagrangeApp(tk.Frame):
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         self._tree.pack(fill=tk.BOTH, expand=True)
 
-    # ──────────── PANEL: PASO A PASO ────────────
     def _build_panel_steps(self):
         f = self._panel("Paso a paso")
-        _, self._si = _scrollable_frame(f)
+        self._si = _scrollable(f)
 
-    # ──────────── PANEL: ERROR LOCAL ────────────
     def _build_panel_error_local(self):
         f = self._panel("Error Local")
-        _, self._si_el = _scrollable_frame(f)
+        self._si_el = _scrollable(f)
 
-    # ──────────── PANEL: ERROR GLOBAL ────────────
     def _build_panel_error_global(self):
         f = self._panel("Error Global")
-        _, self._si_eg = _scrollable_frame(f)
+        self._si_eg = _scrollable(f)
 
-    # ──────────── PANEL: ANALISIS ────────────
     def _build_panel_analisis(self):
         f = self._panel("Analisis")
         self._ta = tk.Text(f, bg=BG3, fg=TEXT,
@@ -396,51 +559,92 @@ class LagrangeApp(tk.Frame):
     # ──────────── PARSEAR INPUTS ────────────
     def _parse_inputs(self):
         env = _math_env()
-        def _ev(s):
-            return float(eval(s.strip(), {"__builtins__": {}}, env))
-        xs = [_ev(v) for v in self.e_xs.get().split(",")]
-        ys = [_ev(v) for v in self.e_ys.get().split(",")]
+
+        def _ev(s, campo="campo"):
+            s = s.strip()
+            if not s:
+                raise ValueError(f"El campo '{campo}' esta vacio.")
+            try:
+                return float(eval(s, {"__builtins__": {}}, env))
+            except Exception as e:
+                raise ValueError(
+                    f"Valor invalido en '{campo}': {s!r}\n"
+                    f"Usa numeros o expresiones como: pi, e, sqrt(2), sin(pi/2)\n"
+                    f"Detalle: {e}"
+                )
+
+        # ── x_i ──
+        xs_raw = [v.strip() for v in self.e_xs.get().split(",") if v.strip()]
+        if not xs_raw:
+            raise ValueError("Ingresa al menos 2 valores en x_i.")
+        xs = [_ev(v, "x_i") for v in xs_raw]
+
+        # ── y_i ──
+        ys_raw = [v.strip() for v in self.e_ys.get().split(",") if v.strip()]
+        if not ys_raw:
+            raise ValueError("Ingresa al menos 2 valores en y_i.")
+        ys = [_ev(v, "y_i") for v in ys_raw]
+
         if len(xs) != len(ys):
-            raise ValueError("x_i e y_i deben tener la misma cantidad de valores.")
-        if len(set(xs)) != len(xs):
-            raise ValueError("Los valores de x_i deben ser distintos.")
-        x_eval = _ev(self.e_xeval.get())
+            raise ValueError(
+                f"x_i tiene {len(xs)} valores y y_i tiene {len(ys)}. "
+                "Deben coincidir."
+            )
+        if len(set(round(v, 10) for v in xs)) != len(xs):
+            raise ValueError("Los valores de x_i deben ser todos distintos.")
+
+        # ── x_eval — COMPLETAMENTE OPCIONAL ──
+        xeval_str = self.e_xeval.get().strip()
+        if xeval_str:
+            x_eval = _ev(xeval_str, "x a evaluar P(x*)")
+        else:
+            x_eval = None   # <— sin error, simplemente no se evalua
+
         return np.array(xs), np.array(ys), x_eval
 
     def _get_fexpr(self):
         return self.e_fx.get().strip()
 
-    def _eval_fx(self, x):
+    def _eval_fx(self, x_val):
         expr = self._get_fexpr()
         if not expr:
             return None
-        return evaluar_expr(expr, x)
+        try:
+            return evaluar_expr(expr, x_val)
+        except Exception as e:
+            raise ValueError(f"Error al evaluar f(x)={expr!r} en x={x_val}: {e}")
 
     # ──────────── CALCULAR ────────────
     def _calcular(self):
         try:
             xs, ys, x_eval = self._parse_inputs()
-            self._xs     = xs
-            self._ys     = ys
-            self._x_eval = x_eval
+            self._xs      = xs
+            self._ys      = ys
+            self._x_eval  = x_eval
 
-            poly = reconstruir_poly1d(xs, ys)
-            self._poly = poly
+            # construir P(x) simbolico — siempre, independiente de x_eval
+            terminos, Px_sym = construir_Px_simbolico(xs.tolist(), ys.tolist())
+            self._Px_sym   = Px_sym
+            self._terminos = terminos
 
-            px = polinomio_lagrange(x_eval, xs, ys)
+            # evaluar P(x*) solo si se dio x_eval
+            if x_eval is not None:
+                px = polinomio_lagrange(x_eval, xs, ys)
+                filas, total = tabla_li_numerica(xs, ys, x_eval)
+                self._render_tabla(filas, total)
+            else:
+                px = None
+                self._render_tabla_vacia()
             self._px = px
 
-            filas, total = tabla_li(xs, ys, x_eval)
-
-            self._render_tabla(filas, total)
-            self._render_pasos(xs, ys, x_eval, px, filas, poly)
+            self._render_pasos(xs, ys, x_eval, px, terminos, Px_sym)
             self._render_error_local(xs, ys, x_eval, px)
-            self._render_error_global(xs, ys, x_eval, px)
-            self._render_analisis(xs, ys, x_eval, px, poly)
+            self._render_error_global(xs, ys, x_eval, px, Px_sym)
+            self._render_analisis(xs, ys, x_eval, px, Px_sym)
             self._show_tab("Paso a paso")
 
         except Exception as exc:
-            messagebox.showerror("Error", str(exc))
+            messagebox.showerror("Error de entrada", str(exc))
 
     # ──────────── GRAFICAR ────────────
     def _graficar(self):
@@ -453,7 +657,7 @@ class LagrangeApp(tk.Frame):
             ax = self._ax
             ax.clear()
             self._style_ax(ax)
-            ax.plot(x_plot, y_poly, color=ACCENT, linewidth=2, label="P(x) — Lagrange")
+            ax.plot(x_plot, y_poly, color=ACCENT, linewidth=2, label="P(x)")
 
             expr = self._get_fexpr()
             if expr:
@@ -466,9 +670,12 @@ class LagrangeApp(tk.Frame):
 
             ax.scatter(xs, ys, color=ORANGE, zorder=5, s=70,
                        label="Puntos (x_i, y_i)")
-            px = polinomio_lagrange(x_eval, xs, ys)
-            ax.scatter([x_eval], [px], color=PURPLE, zorder=6, s=90,
-                       label=f"P({x_eval:.3f}) = {px:.5f}")
+
+            if x_eval is not None:
+                px = polinomio_lagrange(x_eval, xs, ys)
+                ax.scatter([x_eval], [px], color=PURPLE, zorder=6, s=90,
+                           label=f"P({x_eval:.3f}) = {px:.5f}")
+
             ax.axhline(0, color=BORDER, linewidth=0.8)
             ax.legend(facecolor=BG3, edgecolor=BORDER, labelcolor=TEXT, fontsize=9)
             self._canvas.draw()
@@ -491,13 +698,20 @@ class LagrangeApp(tk.Frame):
                 f"{r['yiLi']:.8f}",
             ))
         self._tree.insert("", "end", values=(
-            "—", "—", "—", "TOTAL  P(x) =", f"{total:.8f}"
+            "—", "—", "—", "TOTAL  P(x*) =", f"{total:.8f}"
+        ))
+
+    def _render_tabla_vacia(self):
+        for row in self._tree.get_children():
+            self._tree.delete(row)
+        self._tree.insert("", "end", values=(
+            "—", "—", "—", "Ingresa x* para ver", "la evaluacion numerica"
         ))
 
     # ══════════════════════════════════════
-    # RENDER: PASO A PASO — construccion del polinomio
+    # RENDER: PASO A PASO
     # ══════════════════════════════════════
-    def _render_pasos(self, xs, ys, x_eval, px, filas, poly):
+    def _render_pasos(self, xs, ys, x_eval, px, terminos, Px_sym):
         si = self._si
         for w in si.winfo_children():
             w.destroy()
@@ -505,114 +719,119 @@ class LagrangeApp(tk.Frame):
         n     = len(xs)
         grado = n - 1
 
-        # ── BLOQUE 1: Datos del problema
-        _seccion(si, "PASO 1 — Datos del problema", ACCENT)
+        # ── BLOQUE 1: Datos
+        _seccion(si, "Datos del problema", ACCENT)
         c = _card(si, ACCENT)
-        _linea(c, "Cantidad de puntos:  ", f"n+1 = {n}  →  polinomio de grado {grado}")
-        _linea(c, "Puntos dados:        ", "")
-        for i in range(n):
-            _linea(c, f"   x_{i} = {xs[i]:.6f}", f"   y_{i} = {ys[i]:.6f}", PURPLE)
-        _linea(c, "Evaluar en:          ", f"x = {x_eval:.8f}", YELLOW)
+        _c_titulo(c, "Funcion y puntos dados:", ACCENT)
+        if self._get_fexpr():
+            _c_formula(c, f"f(x) = {self._get_fexpr()}", ACCENT)
+        _c_formula(c, f"x pertenece a [{_fmt_num(min(xs))}, {_fmt_num(max(xs))}]")
+        if x_eval is not None:
+            _c_formula(c, f"Evaluar en:  x* = {_fmt_num(x_eval)}", YELLOW)
+        else:
+            _c_formula(c, "Objetivo: solo construir P(x)", TEAL)
+        _c_formula(c, f"n = {grado}  (grado del polinomio)")
+        _espacio(c)
+        header = "   x  |  " + "  |  ".join(f"x_{i}={_fmt_num(xs[i])}" for i in range(n))
+        _c_texto(c, header, MUTED)
+        vals_row = "y=f(x)| " + "  |  ".join(f"{ys[i]:.5g}" for i in range(n))
+        _c_texto(c, vals_row, ACCENT)
         _espacio(c)
 
         # ── BLOQUE 2: Formula general
-        _seccion(si, "PASO 2 — Formula general de Lagrange", PURPLE)
+        _seccion(si, "Formula de Lagrange", PURPLE)
         c = _card(si, PURPLE)
-        _linea(c, "Formula:  ", "P(x) = y_0*L_0(x) + y_1*L_1(x) + ... + y_n*L_n(x)")
-        _linea(c, "Donde:    ", "L_i(x) = producto de (x - x_j)/(x_i - x_j)  para j != i", MUTED)
+        _c_titulo(c, "Formula general:", PURPLE)
+        _c_formula(c, "P_n(x)  =  sum_{i=0}^{n}  y_i  *  L_i(x)", PURPLE)
+        _c_formula(c, "")
+        _c_titulo(c, "Donde cada base L_i(x) es:", MUTED)
+        _c_formula(c, "L_i(x)  =   prod_{j=0, j!=i}^{n}   (x - x_j)")
+        _c_formula(c, "            ─────────────────────────────────")
+        _c_formula(c, "                     (x_i - x_j)")
         _espacio(c)
 
         # ── BLOQUE 3: Calculo de cada L_i(x)
-        _seccion(si, "PASO 3 — Calculo de cada base L_i(x)", ORANGE)
-        for r in filas:
-            i  = r["i"]
-            xi = r["xi"]
-            yi = r["yi"]
+        _seccion(si, f"Iteraciones — Calculo de cada L_i(x)", ORANGE)
+
+        for t in terminos:
+            i  = t["i"]
+            xi = t["xi"]
+            yi = t["yi"]
+            r  = li_simbolico(i, xs.tolist())
 
             c = _card(si, ORANGE)
 
-            # header con badge
-            hdr = tk.Frame(c, bg=BG2)
-            hdr.pack(anchor="w", padx=14, pady=(8, 4))
-            _badge(hdr, f"  i = {i}  ", ORANGE)
-            tk.Label(hdr, text=f"x_{i} = {xi:.6f}   |   y_{i} = {yi:.6f}",
-                     bg=BG2, fg=MUTED, font=("Consolas", 11)).pack(side=tk.LEFT)
+            j_vals = [j for j in range(n) if j != i]
+            j_str  = ", ".join(str(j) for j in j_vals)
+            _c_titulo(c,
+                f"Iteracion {i+1}:  i = {i},  j = {j_str}",
+                ORANGE)
 
-            # formula simbolica
-            num_sym = " · ".join(
-                f"(x - x_{j})" for j in range(n) if j != i
+            num_str = "  *  ".join(r["num_parts"])
+            den_str = "  *  ".join(r["den_parts"])
+            _c_formula(c, f"L_{i}(x)  =  {num_str}")
+            _c_formula(c, "          " + "─" * max(len(num_str), len(den_str)+2))
+            _c_formula(c, f"             {den_str}")
+            _espacio(c, 4)
+
+            den_vals_str = "  *  ".join(
+                f"({_fmt_num(xi - xs[j])})" for j in range(n) if j != i
             )
-            den_sym = " · ".join(
-                f"(x_{i} - x_{j})" for j in range(n) if j != i
-            )
-            _linea(c, "Formula simbolica:", f"L_{i}(x) = [ {num_sym} ] / [ {den_sym} ]", MUTED)
+            den_prod = t["den_val"]
+            _c_formula(c, f"       =  {num_str}")
+            _c_formula(c, "          " + "─" * (len(num_str) + 4))
+            _c_formula(c, f"             {den_vals_str}  =  {_fmt_num(den_prod)}")
+            _espacio(c, 4)
 
-            # sustitucion del numerador
-            num_sust = " · ".join(
-                f"({x_eval:.4f} - {xs[j]:.4f})" for j in range(n) if j != i
-            )
-            num_vals = [x_eval - xs[j] for j in range(n) if j != i]
-            num_prod = 1.0
-            for v in num_vals:
-                num_prod *= v
-            num_str2 = " · ".join(f"{v:.6f}" for v in num_vals)
-            _linea(c, "Numerador:        ", f"{num_sust}")
-            _linea(c, "             =    ", f"{num_str2}  =  {num_prod:.8f}", GREEN)
+            num_poly_str = _poly_to_str(r["num_expanded"])
+            _c_formula(c, f"       =  {num_poly_str}")
+            _c_formula(c, "          " + "─" * (len(num_poly_str) + 4))
+            _c_formula(c, f"             {_fmt_num(den_prod)}")
+            _espacio(c, 4)
 
-            # sustitucion del denominador
-            den_sust = " · ".join(
-                f"({xi:.4f} - {xs[j]:.4f})" for j in range(n) if j != i
-            )
-            den_vals = [xi - float(xs[j]) for j in range(n) if j != i]
-            den_prod = 1.0
-            for v in den_vals:
-                den_prod *= v
-            den_str2 = " · ".join(f"{v:.6f}" for v in den_vals)
-            _linea(c, "Denominador:      ", f"{den_sust}")
-            _linea(c, "             =    ", f"{den_str2}  =  {den_prod:.8f}", RED)
+            li_str = _poly_to_str(r["li_expr"])
+            _c_resultado_box(c, f"L_{i}(x)  =  {li_str}", ORANGE)
+            _espacio(c, 4)
 
-            # resultado L_i
-            _linea(c, f"L_{i}(x) =         ",
-                   f"{num_prod:.8f} / {den_prod:.8f}  =  {r['Li']:.8f}", ACCENT)
-
-            # contribucion y_i * L_i
-            _linea(c, f"y_{i} * L_{i}(x) =  ",
-                   f"{yi:.6f} * {r['Li']:.8f}  =  {r['yiLi']:.8f}", PURPLE)
+            yi_str = f"{yi:.5g}" if abs(yi - round(yi)) > 1e-9 else str(int(round(yi)))
+            term_str = _poly_to_str(t["termino_expanded"])
+            _c_formula(c, f"y_{i}  *  L_{i}(x)  =  {yi_str}  *  ({li_str})")
+            _c_resultado_box(c, f"y_{i} * L_{i}(x)  =  {term_str}", PURPLE)
             _espacio(c)
 
-        # ── BLOQUE 4: Suma final P(x)
-        _seccion(si, "PASO 4 — Construccion final  P(x)", GREEN)
+        # ── BLOQUE 4: P(x) como suma
+        _seccion(si, "Construccion de P_n(x)", GREEN)
         c = _card(si, GREEN)
+        _c_titulo(c, f"P_{grado}(x) =  suma de todos los terminos:", GREEN)
 
-        suma_partes = "\n             +  ".join(
-            f"y_{r['i']}*L_{r['i']}(x) = {r['yiLi']:.8f}" for r in filas
-        )
-        _linea(c, "P(x) =  ", f"y_0*L_0 + y_1*L_1 + ... + y_{n-1}*L_{n-1}")
-        _linea(c, "     =  ", suma_partes, MUTED)
-        _linea(c, f"P({x_eval:.4f}) = ", f"{px:.8f}", GREEN)
+        partes_Px = []
+        for t in terminos:
+            i      = t["i"]
+            yi_str = f"{t['yi']:.5g}" if abs(t['yi'] - round(t['yi'])) > 1e-9 else str(int(round(t['yi'])))
+            li_s   = _poly_to_str(t["li_expr"])
+            partes_Px.append(f"[{li_s}] * {yi_str}")
 
-        # Polinomio expandido
-        try:
-            coefs = np.round(poly.coefficients, 6)
-            terminos = []
-            grd = len(coefs) - 1
-            for k, c_k in enumerate(coefs):
-                exp = grd - k
-                if abs(c_k) < 1e-10:
-                    continue
-                if exp == 0:
-                    terminos.append(f"{c_k:+.4f}")
-                elif exp == 1:
-                    terminos.append(f"{c_k:+.4f}x")
-                else:
-                    terminos.append(f"{c_k:+.4f}x^{exp}")
-            poly_str = "  ".join(terminos) if terminos else "0"
-            c2 = _card(si, PURPLE)
-            _linea(c2, "Polinomio expandido:", "")
-            _linea(c2, "P(x) = ", poly_str, PURPLE)
-            _espacio(c2)
-        except Exception:
-            pass
+        _c_formula(c, f"P_{grado}(x) = " + "\n              + ".join(partes_Px))
+        _espacio(c, 6)
+
+        Px_str = _poly_to_str(Px_sym)
+        _c_resultado_box(c, f"P_{grado}(x)  =  {Px_str}", GREEN)
+        _espacio(c, 6)
+
+        # evaluacion en x* — solo si se proporciono
+        if x_eval is not None and px is not None:
+            _c_sep(c)
+            _c_titulo(c, f"Evaluacion en x* = {_fmt_num(x_eval)}:", YELLOW)
+            _c_formula(c,
+                f"P_{grado}({_fmt_num(x_eval)})  =  {Px_str.replace('x', '('+_fmt_num(x_eval)+')')}")
+            _c_resultado_box(c, f"P_{grado}({_fmt_num(x_eval)})  =  {px:.8f}", YELLOW)
+        else:
+            # aviso amigable — no es un error
+            _c_sep(c)
+            _c_aviso(c,
+                "No se indico x* — el resultado es el polinomio P(x) de arriba.\n"
+                "  Para evaluar en un punto, ingresalo en 'x a evaluar P(x*)' y recalcula.",
+                TEAL)
 
     # ══════════════════════════════════════
     # RENDER: ERROR LOCAL
@@ -622,86 +841,95 @@ class LagrangeApp(tk.Frame):
         for w in si.winfo_children():
             w.destroy()
 
-        fexpr = self._get_fexpr()
-
-        # ── DEFINICION
-        _seccion(si, "ERROR LOCAL — Definicion", RED)
+        _seccion(si, "ERROR LOCAL", RED)
         c = _card(si, RED)
-        _linea(c, "Formula:     ", "|E(x)| = |f(x) - P(x)|", RED)
-        _linea(c, "Referencia:  ", "Caceres, pag. 22 — 'Error local'", MUTED)
-        _linea(c, "Significado: ",
-               "diferencia entre el valor real y el polinomio en un punto dado", MUTED)
+        _c_titulo(c, "Definicion:", RED)
+        _c_formula(c, "|E(x*)| = |f(x*) - P_n(x*)|", RED)
+        _c_formula(c, "Referencia: Caceres pag. 22", MUTED)
         _espacio(c)
 
-        if not fexpr:
-            _seccion(si, "Atencion", YELLOW)
-            c = _card(si, YELLOW)
-            _linea(c, "Para calcular el error local necesitas ingresar", "", YELLOW)
-            _linea(c, "la funcion real f(x) en el campo del sidebar.", "", YELLOW)
-            _linea(c, "Ejemplo:  sin(x),  exp(x),  x**2", "", MUTED)
+        # ── requisito: x_eval ──
+        if x_eval is None:
+            _c_aviso(c,
+                "Para calcular el error local necesitas ingresar x* (punto de evaluacion).\n"
+                "  Ingresalo en el sidebar y recalcula.",
+                YELLOW)
             return
 
-        # ── PASO 1: valores conocidos
-        _seccion(si, "PASO 1 — Valores conocidos", ACCENT)
-        c = _card(si, ACCENT)
-        _linea(c, "Punto de evaluacion:  ", f"x = {x_eval:.8f}", YELLOW)
-        _linea(c, "Funcion real:         ", f"f(x) = {fexpr}", ACCENT)
-        _linea(c, "Polinomio:            ", f"P(x) de grado {len(xs)-1}", ACCENT)
+        # ── requisito: f(x) ──
+        fexpr = self._get_fexpr()
+        if not fexpr:
+            _c_aviso(c,
+                "Para calcular el error local necesitas ingresar f(x) en el sidebar.\n"
+                "  Ejemplo: exp(x),  sin(x),  x**2",
+                YELLOW)
+            return
+
         _espacio(c)
 
-        # ── PASO 2: evaluar f(x)
-        _seccion(si, "PASO 2 — Evaluar f(x) en el punto", GREEN)
+        # PASO 1
+        _seccion(si, "PASO 1 — Valores conocidos", ACCENT)
+        c = _card(si, ACCENT)
+        _c_titulo(c, "Datos del problema:", ACCENT)
+        _c_formula(c, f"f(x) = {fexpr}", ACCENT)
+        _c_formula(c, f"x*   = {_fmt_num(x_eval)}", YELLOW)
+        _c_formula(c, f"x* pertenece al intervalo [{_fmt_num(min(xs))}, {_fmt_num(max(xs))}]")
+        _espacio(c)
+
+        # PASO 2
+        _seccion(si, "PASO 2 — Calcular f(x*)", GREEN)
         c = _card(si, GREEN)
         try:
             fx_val = evaluar_expr(fexpr, x_eval)
-            _linea(c, f"f({x_eval:.6f}) = ", f"{fexpr}  evaluada en x = {x_eval:.6f}", MUTED)
-            _linea(c, "Resultado:           ", f"f(x) = {fx_val:.8f}", GREEN)
         except Exception as e:
-            _linea(c, "Error al evaluar f(x): ", str(e), RED)
+            _c_texto(c, f"Error al evaluar f(x*): {e}", RED)
             return
+        _c_titulo(c, f"Evaluamos f(x) en x* = {_fmt_num(x_eval)}:", GREEN)
+        _c_formula(c, f"f({_fmt_num(x_eval)})  =  {fexpr}  con  x = {_fmt_num(x_eval)}")
+        _c_resultado_box(c, f"f({_fmt_num(x_eval)})  =  {fx_val:.8f}", GREEN)
         _espacio(c)
 
-        # ── PASO 3: evaluar P(x)
-        _seccion(si, "PASO 3 — Valor del polinomio P(x)", PURPLE)
+        # PASO 3
+        _seccion(si, "PASO 3 — Calcular P(x*)", PURPLE)
         c = _card(si, PURPLE)
-        _linea(c, f"P({x_eval:.6f}) = ", f"{px:.8f}", PURPLE)
+        Px_str = _poly_to_str(self._Px_sym) if self._Px_sym is not None else "P(x)"
+        _c_titulo(c, f"Evaluamos el polinomio en x* = {_fmt_num(x_eval)}:", PURPLE)
+        _c_formula(c, f"P({_fmt_num(x_eval)})  =  {Px_str}  con  x = {_fmt_num(x_eval)}")
+        _c_resultado_box(c, f"P({_fmt_num(x_eval)})  =  {px:.8f}", PURPLE)
         _espacio(c)
 
-        # ── PASO 4: calcular error
-        _seccion(si, "PASO 4 — Calculo del error local", RED)
+        # PASO 4
+        _seccion(si, "PASO 4 — Error local", RED)
         c = _card(si, RED)
         err = abs(fx_val - px)
-        _linea(c, "Formula:       ", "|E(x)| = |f(x) - P(x)|")
-        _linea(c, "Reemplazando:  ",
-               f"|E| = |{fx_val:.8f} - {px:.8f}|")
-        _linea(c, "               ",
-               f"     = |{fx_val - px:.8f}|", MUTED)
-        _linea(c, "ERROR LOCAL =  ", f"{err:.2e}   =   {err:.10f}", RED)
+        _c_titulo(c, "Aplicamos la formula:", RED)
+        _c_formula(c, f"|E({_fmt_num(x_eval)})| = |f(x*) - P(x*)|")
+        _c_formula(c, f"         = |{fx_val:.8f} - {px:.8f}|")
+        _c_formula(c, f"         = |{fx_val - px:.8f}|")
+        _c_resultado_box(c, f"|E({_fmt_num(x_eval)})|  =  {err:.6f}  ≈  {err:.2e}", RED)
         _espacio(c)
 
-        # ── PASO 5: interpretacion
+        # PASO 5
         _seccion(si, "PASO 5 — Interpretacion", YELLOW)
         c = _card(si, YELLOW)
         if err < 1e-6:
-            calidad = "MUY BUENA  (error < 1e-6)"
-            color_k = GREEN
+            cal, col = "MUY BUENA  (error < 1e-6)", GREEN
         elif err < 1e-3:
-            calidad = "BUENA  (error < 1e-3)"
-            color_k = ACCENT
+            cal, col = "BUENA  (error < 1e-3)", ACCENT
         elif err < 1e-1:
-            calidad = "ACEPTABLE  (error < 0.1)"
-            color_k = YELLOW
+            cal, col = "ACEPTABLE  (error < 0.1)", YELLOW
         else:
-            calidad = "ALTA  — revisar el polinomio o agregar mas puntos"
-            color_k = RED
-        _linea(c, "Precision:     ", calidad, color_k)
-        _linea(c, "Error relativo:", f"{abs(err/fx_val)*100:.4f} %  (si f(x) != 0)" if fx_val != 0 else "f(x) = 0, no se puede calcular relativo", MUTED)
+            cal, col = "ALTA — agregar mas puntos", RED
+        _c_igual(c, "Precision", cal, col)
+        if fx_val != 0:
+            _c_igual(c, "Error relativo",
+                     f"{abs(err/fx_val)*100:.4f} %", MUTED)
         _espacio(c)
 
     # ══════════════════════════════════════
-    # RENDER: ERROR GLOBAL (cota teorica)
+    # RENDER: ERROR GLOBAL
     # ══════════════════════════════════════
-    def _render_error_global(self, xs, ys, x_eval, px):
+    def _render_error_global(self, xs, ys, x_eval, px, Px_sym):
         si = self._si_eg
         for w in si.winfo_children():
             w.destroy()
@@ -709,112 +937,144 @@ class LagrangeApp(tk.Frame):
         n     = len(xs)
         grado = n - 1
         fexpr = self._get_fexpr()
+        a     = float(min(xs))
+        b     = float(max(xs))
 
-        # ── DEFINICION
+        # definicion siempre visible
         _seccion(si, "ERROR GLOBAL — Cota teorica", ORANGE)
         c = _card(si, ORANGE)
-        _linea(c, "Formula (Caceres pag. 21):", "")
-        _linea(c, "  |E(x)| <=", " M_(n+1) / (n+1)!  *  |prod(x - x_i)|", ORANGE)
-        _linea(c, "Donde:", "")
-        _linea(c, "  M_(n+1) = ", "max |f^(n+1)(xi)| en el intervalo", MUTED)
-        _linea(c, "  (n+1)!  = ", "factorial de n+1", MUTED)
-        _linea(c, "  prod    = ", "producto (x-x_0)(x-x_1)...(x-x_n)", MUTED)
+        _c_titulo(c, "Formula (Caceres pag. 21):", ORANGE)
+        _c_formula(c, "|E(x)| <=  max|f^(n+1)(xi)|  *  |prod(x - x_i)|")
+        _c_formula(c, "           ─────────────────")
+        _c_formula(c, "                 (n+1)!")
         _espacio(c)
 
-        # ── PASO 1: orden de la derivada
-        _seccion(si, "PASO 1 — Orden de la derivada necesaria", ACCENT)
-        c = _card(si, ACCENT)
-        orden = n   # f^(n+1), con n+1 puntos → derivada de orden n+1
-        _linea(c, "n + 1 puntos:          ", f"{n}")
-        _linea(c, "Grado del polinomio:   ", f"{grado}")
-        _linea(c, "Derivada necesaria:    ", f"f^({orden})(x)  = derivada de orden {orden}", ACCENT)
-        _linea(c, "Factorial (n+1)! = :   ",
-               f"{orden}! = {math.factorial(orden)}", GREEN)
+        # PASO 1: derivada
+        _seccion(si, "PASO 1 — Derivada n-esima  f^(n+1)(x)", TEAL)
+        c = _card(si, TEAL)
+        orden = n
+        _c_titulo(c, f"Con n+1 = {n} puntos, el grado es {grado}, necesitamos:", TEAL)
+        _c_formula(c, f"f^({orden})(x)  =  derivada de orden {orden} de f(x)")
+        _c_formula(c, f"(n+1)!  =  {orden}!  =  {math.factorial(orden)}", GREEN)
         _espacio(c)
 
-        # ── PASO 2: intervalo de analisis
-        a = min(xs)
-        b = max(xs)
+        if fexpr:
+            try:
+                f_sym = sp.sympify(fexpr)
+                for _ in range(orden):
+                    f_sym = sp.diff(f_sym, _x)
+                f_sym_s = sp.simplify(f_sym)
+                _c_titulo(c, "Calculamos la derivada:", TEAL)
+                _c_formula(c, f"f(x)      = {fexpr}", ACCENT)
+                _c_formula(c, f"f^({orden})(x)  = {str(f_sym_s)}", GREEN)
+            except Exception:
+                pass
+        _espacio(c)
+
+        # PASO 2: intervalo
         _seccion(si, "PASO 2 — Intervalo de analisis", PURPLE)
         c = _card(si, PURPLE)
-        _linea(c, "Intervalo:  ", f"[{a:.6f},  {b:.6f}]", PURPLE)
-        _linea(c, "Basado en:  ", "los nodos x_0, x_1, ..., x_n", MUTED)
+        _c_titulo(c, "Intervalo basado en los nodos:", PURPLE)
+        _c_formula(c, f"[a, b]  =  [{_fmt_num(a)},  {_fmt_num(b)}]")
         _espacio(c)
 
-        # ── PASO 3: producto omega(x)
-        _seccion(si, "PASO 3 — Calculo de  omega(x) = prod(x - x_i)", GREEN)
+        # PASO 3: omega
+        _seccion(si, "PASO 3 — Funcion  omega(x) = prod(x - x_i)", GREEN)
         c = _card(si, GREEN)
-        partes_sym = " · ".join(f"(x - x_{i})" for i in range(n))
-        _linea(c, "Formula simbolica: ", f"omega(x) = {partes_sym}")
+        _c_titulo(c, "Definimos:", GREEN)
+        omega_sym_str = "  *  ".join(f"(x - {_fmt_num(xi)})" for xi in xs)
+        _c_formula(c, f"omega(x)  =  {omega_sym_str}", GREEN)
+        _espacio(c, 4)
 
-        partes_num = " · ".join(f"({x_eval:.4f} - {xs[i]:.4f})" for i in range(n))
-        vals_omega = [x_eval - float(xs[i]) for i in range(n)]
-        omega = 1.0
-        for v in vals_omega:
-            omega *= v
-        vals_str = " · ".join(f"{v:.6f}" for v in vals_omega)
-        _linea(c, "Evaluando en x:    ", f"omega({x_eval:.4f}) = {partes_num}")
-        _linea(c, "                 = ", f"{vals_str}")
-        _linea(c, "|omega(x)| =       ", f"{abs(omega):.8f}", GREEN)
+        r_omega = hallar_max_omega(xs.tolist(), a, b)
+        _c_formula(c, f"omega(x)  =  {r_omega['omega_expr']}", MUTED)
         _espacio(c)
 
-        # ── PASO 4: M_(n+1)
-        _seccion(si, "PASO 4 — Estimacion de  M_(n+1) = max |f^(n+1)(x)|", YELLOW)
+        # PASO 4: maximo omega
+        _seccion(si, "PASO 4 — Hallar max |omega(x)| via  omega'(x) = 0", YELLOW)
         c = _card(si, YELLOW)
-
-        if not fexpr:
-            _linea(c, "Necesitas ingresar f(x) en el sidebar", "", YELLOW)
-            _linea(c, "para calcular M_(n+1) numericamente.", "", MUTED)
-            # Igual mostramos la formula con M desconocida
-            facto = math.factorial(orden)
-            _linea(c, f"Cota = M_{orden} / {facto} * |omega|", "", ORANGE)
-            _linea(c, "     = M / ?  (ingresa f(x) para calcular)", "", MUTED)
-            return
-
-        # derivada numerica de orden n+1 en grilla
-        try:
-            _linea(c, "Metodo:        ", f"derivada numerica de orden {orden} en {200} puntos del intervalo", MUTED)
-            M = max_derivada_intervalo(fexpr, orden, a, b, puntos=200)
-            _linea(c, f"M_{orden} = max |f^({orden})(x)| = ", f"{M:.6f}  (en [{a:.4f}, {b:.4f}])", YELLOW)
-        except Exception as e:
-            _linea(c, "Error al calcular derivada: ", str(e), RED)
-            return
+        _c_titulo(c, "Derivamos omega(x):", YELLOW)
+        _c_formula(c, f"omega'(x)  =  {r_omega['domega_expr']}", YELLOW)
+        _espacio(c, 4)
+        _c_formula(c, "Resolvemos omega'(x) = 0  para hallar los puntos criticos:")
+        if r_omega["criticos"]:
+            for k, cv in enumerate(r_omega["criticos"]):
+                ov = abs(float(r_omega["omega_sym"].subs(_x, cv)))
+                _c_formula(c, f"x_{k+1}  =  {cv:.6f}   ->   |omega(x_{k+1})|  =  {ov:.6f}")
+        else:
+            _c_formula(c, "Sin criticos en el intervalo interior.")
+        _espacio(c, 4)
+        _c_formula(c, "Evaluamos tambien en los extremos del intervalo:")
+        for pt, val in r_omega["evals"]:
+            _c_formula(c, f"omega({_fmt_num(pt)})  =  {val:.6f}")
+        _espacio(c, 4)
+        _c_resultado_box(c,
+            f"max |omega(x)| en [{_fmt_num(a)}, {_fmt_num(b)}]  =  {r_omega['max_omega']:.6f}",
+            YELLOW)
         _espacio(c)
 
-        # ── PASO 5: cota final
-        _seccion(si, "PASO 5 — Cota del error global", RED)
+        # PASO 5: M_(n+1) — requiere f(x)
+        _seccion(si, f"PASO 5 — Maximo de  |f^({orden})(x)|  en el intervalo", RED)
         c = _card(si, RED)
-        facto   = math.factorial(orden)
-        cota    = M / facto * abs(omega)
-        _linea(c, "Formula:           ", f"|E(x)| <= M_{orden} / {orden}! * |omega(x)|")
-        _linea(c, "Reemplazando:      ", f"|E| <= {M:.4f} / {facto} * {abs(omega):.6f}")
-        _linea(c, "                 = ", f"{M:.4f} / {facto}  *  {abs(omega):.6f}")
-        _linea(c, "COTA DE ERROR  =   ", f"{cota:.2e}   =   {cota:.10f}", RED)
+        if not fexpr:
+            _c_aviso(c,
+                "Ingresa f(x) en el sidebar para calcular M y obtener la cota numerica.\n"
+                "  Los pasos 1-4 (omega) ya estan calculados arriba.",
+                YELLOW)
+            return
+        try:
+            M = max_derivada_intervalo(fexpr, orden, a, b, puntos=200)
+            _c_titulo(c, f"Calculamos numericamente max|f^({orden})(x)| en [{_fmt_num(a)}, {_fmt_num(b)}]:", RED)
+            _c_resultado_box(c,
+                f"M_{orden}  =  max|f^({orden})(x)|  =  {M:.6f}",
+                RED)
+        except Exception as e:
+            _c_texto(c, f"Error al calcular derivada: {e}", RED)
+            return
         _espacio(c)
 
-        # ── PASO 6: comparacion con error real
-        fxval = None
-        try:
-            fxval = evaluar_expr(fexpr, x_eval)
-        except Exception:
-            pass
+        # PASO 6: cota final
+        _seccion(si, "PASO 6 — Cota del error global", ORANGE)
+        c = _card(si, ORANGE)
+        facto = math.factorial(orden)
+        cota  = M / facto * r_omega["max_omega"]
+        _c_titulo(c, "Reemplazamos en la formula:", ORANGE)
+        _c_formula(c, f"|E(x)| <=  M_{orden} / {orden}!  *  max|omega(x)|")
+        _c_formula(c, f"        <=  {M:.4f} / {facto}  *  {r_omega['max_omega']:.6f}")
+        _c_resultado_box(c,
+            f"Cota de error global  <=  {cota:.2e}  =  {cota:.8f}",
+            ORANGE)
+        _espacio(c)
 
-        if fxval is not None:
-            _seccion(si, "PASO 6 — Verificacion con error real", ACCENT)
+        # PASO 7: comparar con error real — solo si hay x_eval y f(x)
+        if x_eval is not None and px is not None:
+            _seccion(si, "PASO 7 — Verificacion con error local", ACCENT)
             c = _card(si, ACCENT)
-            err_real = abs(fxval - px)
-            _linea(c, "Error real:        ", f"|f(x) - P(x)| = {err_real:.2e}", ACCENT)
-            _linea(c, "Cota teorica:      ", f"{cota:.2e}", ORANGE)
-            ok = err_real <= cota * (1 + 1e-6)
-            msg = "OK — el error real es menor que la cota" if ok else "REVISAR — el error supera la cota (puede ser por la derivada numerica)"
-            color_v = GREEN if ok else RED
-            _linea(c, "Verificacion:      ", msg, color_v)
+            try:
+                fx_val   = evaluar_expr(fexpr, x_eval)
+                err_real = abs(fx_val - px)
+                _c_titulo(c, f"En x* = {_fmt_num(x_eval)}:", ACCENT)
+                _c_igual(c, "Error real  |f(x*) - P(x*)|",
+                         f"{err_real:.2e}", ACCENT)
+                _c_igual(c, "Cota teorica", f"{cota:.2e}", ORANGE)
+                ok  = err_real <= cota * (1 + 1e-6)
+                msg = "OK — error real <= cota" if ok else "REVISAR (cota numerica puede ser imprecisa)"
+                _c_resultado_box(c, msg, GREEN if ok else YELLOW)
+            except Exception:
+                pass
             _espacio(c)
+        else:
+            # aviso suave — no es error
+            _seccion(si, "PASO 7 — Verificacion con error local", ACCENT)
+            c = _card(si, ACCENT)
+            _c_aviso(c,
+                "Si ingresas x* en el sidebar, aqui se comparara el error real vs la cota.",
+                TEAL)
 
     # ══════════════════════════════════════
     # RENDER: ANALISIS
     # ══════════════════════════════════════
-    def _render_analisis(self, xs, ys, x_eval, px, poly):
+    def _render_analisis(self, xs, ys, x_eval, px, Px_sym):
         ta = self._ta
         ta.config(state="normal")
         ta.delete("1.0", tk.END)
@@ -827,48 +1087,36 @@ class LagrangeApp(tk.Frame):
         w("Ref: Caceres, Modelado y Simulacion, 2 ed. 2026, pag. 20-23\n\n", "muted")
 
         w("DATOS\n", "title")
-        w(f"  Puntos:       n+1 = {n}  →  grado = {n-1}\n")
+        w(f"  Puntos:  n+1 = {n}  ->  grado = {n-1}\n")
         w(f"  x_i = {[round(float(v),6) for v in xs]}\n", "info")
         w(f"  y_i = {[round(float(v),6) for v in ys]}\n\n", "info")
 
-        w("RESULTADO\n", "title")
-        w(f"  x evaluado:   {x_eval:.8f}\n")
-        w(f"  P(x) =        "); w(f"{px:.8f}\n", "ok")
+        w("POLINOMIO\n", "title")
+        Px_str = _poly_to_str(Px_sym)
+        w(f"  P(x) = {Px_str}\n\n", "ok")
 
-        fexpr = self._get_fexpr()
-        if fexpr:
-            try:
-                fx = evaluar_expr(fexpr, x_eval)
-                err = abs(fx - px)
-                w(f"  f(x) real =   "); w(f"{fx:.8f}\n", "info")
-                w(f"  Error local = "); w(f"{err:.2e}\n\n", "warn")
-            except Exception:
-                pass
-
-        w("POLINOMIO EXPANDIDO\n", "title")
-        try:
-            coefs = np.round(poly.coefficients, 8)
-            terminos = []
-            grd = len(coefs) - 1
-            for k, ck in enumerate(coefs):
-                exp = grd - k
-                if abs(ck) < 1e-10:
-                    continue
-                if exp == 0:
-                    terminos.append(f"{ck:+.4f}")
-                elif exp == 1:
-                    terminos.append(f"{ck:+.4f}x")
-                else:
-                    terminos.append(f"{ck:+.4f}x^{exp}")
-            poly_str = "  ".join(terminos) if terminos else "0"
-            w(f"  P(x) = {poly_str}\n\n", "info")
-        except Exception:
-            pass
+        if x_eval is not None and px is not None:
+            w("EVALUACION\n", "title")
+            w(f"  x*    = {x_eval:.8f}\n")
+            w(f"  P(x*) = "); w(f"{px:.8f}\n", "ok")
+            fexpr = self._get_fexpr()
+            if fexpr:
+                try:
+                    fx = evaluar_expr(fexpr, x_eval)
+                    err = abs(fx - px)
+                    w(f"  f(x*) = "); w(f"{fx:.8f}\n", "info")
+                    w(f"  Error local = "); w(f"{err:.2e}\n\n", "warn")
+                except Exception:
+                    pass
+        else:
+            w("EVALUACION\n", "title")
+            w("  x* no especificado — resultado: solo P(x) construido.\n", "muted")
+            w("  Ingresa x* en el sidebar si necesitas evaluar en un punto.\n\n", "muted")
 
         w("TEOREMA (Caceres pag. 20)\n", "title")
-        w("  Existencia:  para n+1 puntos distintos siempre\n")
-        w("               existe un unico polinomio de grado n.\n", "ok")
-        w("  Unicidad:    el polinomio es unico.\n\n", "ok")
+        w("  Existencia: para n+1 puntos distintos siempre existe\n")
+        w("              un unico polinomio de grado <= n.\n", "ok")
+        w("  Unicidad:   el polinomio es unico.\n", "ok")
 
         ta.config(state="disabled")
 
