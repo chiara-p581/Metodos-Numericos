@@ -16,6 +16,7 @@ from aitken              import AitkenApp
 from newton              import NewtonApp
 from Lagrange            import LagrangeApp
 from Diferencias_Finitas import DiferenciasFinitasApp
+from integracion         import IntegracionApp
 
 
 # ══════════════════════════════════════════════════════
@@ -238,6 +239,7 @@ class MetodosNumericos:
         ("Newton-Raphson",   NewtonApp),
         ("Lagrange",         LagrangeApp),
         ("Dif. Finitas",     DiferenciasFinitasApp),
+        ("Integracion",      IntegracionApp),
     ]
 
     def __init__(self):
