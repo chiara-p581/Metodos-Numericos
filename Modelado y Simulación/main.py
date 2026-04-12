@@ -14,7 +14,7 @@ from biseccion           import BiseccionApp
 from punto_fijo          import PuntoFijoApp
 from aitken              import AitkenApp
 from newton              import NewtonApp
-from lagrange            import LagrangeApp
+from Lagrange            import LagrangeApp
 from Diferencias_Finitas import DiferenciasFinitasApp
 from integracion         import IntegracionApp
 from montecarlo          import MontecarloApp

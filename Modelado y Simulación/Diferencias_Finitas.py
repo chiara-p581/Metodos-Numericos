@@ -62,80 +62,47 @@ def evaluar(expr, x_val):
 # Ref: Caceres pag. 24
 # ══════════════════════════════════════
 
-# ── PROGRESIVAS ──────────────────────
 def df_progresiva_1(f, x, h):
-    """f'(x) progresiva orden 1  (Caceres, pag. 24)."""
     return (f(x + h) - f(x)) / h
 
 def df_progresiva_2(f, x, h):
-    """f''(x) progresiva orden 1  (Caceres, pag. 24)."""
     return (f(x + 2*h) - 2*f(x + h) + f(x)) / h**2
 
-# ── REGRESIVAS ───────────────────────
 def df_regresiva_1(f, x, h):
-    """f'(x) regresiva orden 1  (Caceres, pag. 24)."""
     return (f(x) - f(x - h)) / h
 
 def df_regresiva_2(f, x, h):
-    """f''(x) regresiva orden 1  (Caceres, pag. 24)."""
     return (f(x) - 2*f(x - h) + f(x - 2*h)) / h**2
 
-# ── CENTRALES ────────────────────────
 def df_central_1(f, x, h):
-    """f'(x) central orden 2  (Caceres, pag. 24)."""
     return (f(x + h) - f(x - h)) / (2 * h)
 
 def df_central_2(f, x, h):
-    """f''(x) central orden 2  (Caceres, pag. 24)."""
     return (f(x + h) - 2*f(x) + f(x - h)) / h**2
 
-# ── TABLA COMPLETA ───────────────────
 def calcular_tabla_completa(fexpr, xs_list, h):
-    """
-    Genera tabla con f'(x) y f''(x) por los tres metodos
-    en cada punto dado, usando diferencias finitas.
-    Ref: Caceres pag. 24-25.
-    """
     def f(x): return evaluar(fexpr, x)
-
     rows = []
     for x in xs_list:
-        row = {
-            "x":   x,
-            "fx":  f(x),
-            # progresivas
-            "fp1": df_progresiva_1(f, x, h),
-            "fp2": df_progresiva_2(f, x, h),
-            # regresivas
-            "fr1": df_regresiva_1(f, x, h),
-            "fr2": df_regresiva_2(f, x, h),
-            # centrales
-            "fc1": df_central_1(f, x, h),
-            "fc2": df_central_2(f, x, h),
-        }
-        rows.append(row)
+        rows.append({
+            "x":   x, "fx":  f(x),
+            "fp1": df_progresiva_1(f, x, h), "fp2": df_progresiva_2(f, x, h),
+            "fr1": df_regresiva_1(f, x, h),  "fr2": df_regresiva_2(f, x, h),
+            "fc1": df_central_1(f, x, h),    "fc2": df_central_2(f, x, h),
+        })
     return rows
 
 def calcular_punto_unico(fexpr, x, h):
-    """Calcula todos los metodos en un solo punto con detalle."""
     def f(v): return evaluar(fexpr, v)
-
     vals = {
-        "fx":    f(x),
-        "fxph":  f(x + h),
-        "fx2ph": f(x + 2*h),
-        "fxmh":  f(x - h),
-        "fx2mh": f(x - 2*h),
+        "fx":    f(x),   "fxph":  f(x + h),
+        "fx2ph": f(x + 2*h), "fxmh":  f(x - h), "fx2mh": f(x - 2*h),
     }
-
     return {
         **vals,
-        "fp1":  df_progresiva_1(f, x, h),
-        "fp2":  df_progresiva_2(f, x, h),
-        "fr1":  df_regresiva_1(f, x, h),
-        "fr2":  df_regresiva_2(f, x, h),
-        "fc1":  df_central_1(f, x, h),
-        "fc2":  df_central_2(f, x, h),
+        "fp1": df_progresiva_1(f, x, h), "fp2": df_progresiva_2(f, x, h),
+        "fr1": df_regresiva_1(f, x, h),  "fr2": df_regresiva_2(f, x, h),
+        "fc1": df_central_1(f, x, h),    "fc2": df_central_2(f, x, h),
     }
 
 
@@ -189,10 +156,9 @@ class DiferenciasFinitasApp(tk.Frame):
             master.configure(bg=BG)
             master.geometry("1280x720")
             master.minsize(980, 580)
-        self._rows  = []
+        self._rows = []
         self._build()
 
-    # ──────────── LAYOUT ────────────
     def _build(self):
         self._topbar()
         body = tk.Frame(self, bg=BG)
@@ -216,15 +182,51 @@ class DiferenciasFinitasApp(tk.Frame):
         sb.pack(side=tk.LEFT, fill=tk.Y)
         sb.pack_propagate(False)
 
-        inner = tk.Frame(sb, bg=BG2)
-        inner.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
+        # ── canvas scrollable ──
+        container = tk.Frame(sb, bg=BG2)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        canvas    = tk.Canvas(container, bg=BG2, highlightthickness=0)
+        scrollbar = tk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        inner  = tk.Frame(canvas, bg=BG2)
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(window, width=e.width))
+
+        # scroll con rueda — activo solo cuando el mouse está sobre el sidebar
+        def _scroll_sidebar(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind_scroll(e):
+            canvas.bind_all("<MouseWheel>", _scroll_sidebar)
+
+        def _unbind_scroll(e):
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", _bind_scroll)
+        canvas.bind("<Leave>", _unbind_scroll)
+        inner.bind("<Enter>",  _bind_scroll)
+        inner.bind("<Leave>",  _unbind_scroll)
+
+        # forzar scrollregion después del layout
+        self.after(150, lambda: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        inner.configure(padx=14, pady=14)
+        # ───────────────────────
 
         _lbl(inner, "FUNCION Y PARAMETROS", fg=MUTED,
              font=("Segoe UI", 15, "bold")).pack(anchor="w", pady=(0, 6))
 
-        self.e_f = _labeled_entry(inner, "f(x)", "x**3 - 2*x + 1")
-        self.e_x = _labeled_entry(inner, "x  (punto a derivar)", "2")
-        self.e_h = _labeled_entry(inner, "h  (paso)", "0.1")
+        self.e_f  = _labeled_entry(inner, "f(x)", "x**3 - 2*x + 1")
+        self.e_x  = _labeled_entry(inner, "x  (punto a derivar)", "2")
+        self.e_h  = _labeled_entry(inner, "h  (paso)", "0.1")
 
         tk.Frame(inner, bg=BORDER, height=1).pack(fill=tk.X, pady=4)
         _lbl(inner, "MULTIPLES PUNTOS", fg=MUTED,
@@ -232,7 +234,6 @@ class DiferenciasFinitasApp(tk.Frame):
 
         self.e_xs = _labeled_entry(inner, "x_i (sep. por coma)", "0, 1, 2, 3")
 
-        # selector de metodo
         _lbl(inner, "Metodo para el grafico:").pack(anchor="w")
         self.metodo_var = tk.StringVar(value="Central")
         frame_radio = tk.Frame(inner, bg=BG2)
@@ -244,10 +245,10 @@ class DiferenciasFinitasApp(tk.Frame):
                            font=("Segoe UI", 11)).pack(anchor="w")
 
         tk.Frame(inner, bg=BORDER, height=1).pack(fill=tk.X, pady=8)
-        _btn(inner, "Calcular punto unico", self._calcular_punto).pack(fill=tk.X, pady=3)
-        _btn(inner, "Tabla multiples puntos", self._calcular_tabla,
+        _btn(inner, "Calcular punto unico",    self._calcular_punto).pack(fill=tk.X, pady=3)
+        _btn(inner, "Tabla multiples puntos",  self._calcular_tabla,
              color=BG3, fg=ACCENT).pack(fill=tk.X, pady=3)
-        _btn(inner, "Graficar f(x) y f'(x)", self._graficar,
+        _btn(inner, "Graficar f(x) y f'(x)",  self._graficar,
              color=BG3, fg=GREEN).pack(fill=tk.X, pady=3)
 
     def _main_area(self, parent):
@@ -292,7 +293,6 @@ class DiferenciasFinitasApp(tk.Frame):
         self._tab_frames[name] = f
         return f
 
-    # ──────────── PANEL: GRAFICO ────────────
     def _build_panel_grafico(self):
         f = self._panel("Grafico")
         self._fig = Figure(figsize=(8, 5), facecolor=BG)
@@ -304,39 +304,31 @@ class DiferenciasFinitasApp(tk.Frame):
         self._canvas = FigureCanvasTkAgg(self._fig, master=f)
         self._canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-    # ──────────── PANEL: TABLA ────────────
     def _build_panel_tabla(self):
         f = self._panel("Tabla")
         style = ttk.Style()
         style.theme_use("default")
         style.configure("Dark.Treeview",
                         background=BG2, fieldbackground=BG2,
-                        foreground=TEXT, rowheight=32,
-                        font=("Consolas", 11))
+                        foreground=TEXT, rowheight=32, font=("Consolas", 11))
         style.configure("Dark.Treeview.Heading",
                         background=BG3, foreground=MUTED,
                         font=("Segoe UI", 15, "bold"), relief="flat")
         style.map("Dark.Treeview",
                   background=[("selected", ACCENT)],
                   foreground=[("selected", "#000")])
-
         cols = ("x", "f(x)", "f'prog", "f''prog", "f'reg", "f''reg", "f'cent", "f''cent")
-        self._tree = ttk.Treeview(f, columns=cols, show="headings",
-                                   style="Dark.Treeview")
+        self._tree = ttk.Treeview(f, columns=cols, show="headings", style="Dark.Treeview")
         for col in cols:
             self._tree.heading(col, text=col)
             self._tree.column(col, width=95, anchor="e")
-
-        # scrollbar horizontal
         hsb = ttk.Scrollbar(f, orient="horizontal", command=self._tree.xview)
-        self._tree.configure(xscrollcommand=hsb.set)
-        vsb = ttk.Scrollbar(f, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=vsb.set)
+        vsb = ttk.Scrollbar(f, orient="vertical",   command=self._tree.yview)
+        self._tree.configure(xscrollcommand=hsb.set, yscrollcommand=vsb.set)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         hsb.pack(side=tk.BOTTOM, fill=tk.X)
         self._tree.pack(fill=tk.BOTH, expand=True)
 
-    # ──────────── PANEL: PASO A PASO ────────────
     def _build_panel_steps(self):
         f = self._panel("Paso a paso")
         wrap = tk.Frame(f, bg=BG)
@@ -347,15 +339,17 @@ class DiferenciasFinitasApp(tk.Frame):
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self._sc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._si = tk.Frame(self._sc, bg=BG)
-        self._sw = self._sc.create_window((0,0), window=self._si, anchor="nw")
+        self._sw = self._sc.create_window((0, 0), window=self._si, anchor="nw")
         self._si.bind("<Configure>",
             lambda e: self._sc.configure(scrollregion=self._sc.bbox("all")))
         self._sc.bind("<Configure>",
             lambda e: self._sc.itemconfig(self._sw, width=e.width))
-        self._sc.bind_all("<MouseWheel>",
-            lambda e: self._sc.yview_scroll(int(-1*(e.delta/120)), "units"))
+        # scroll del panel paso a paso — activo cuando el mouse está sobre él
+        def _scroll_steps(event):
+            self._sc.yview_scroll(int(-1*(event.delta/120)), "units")
+        self._sc.bind("<Enter>", lambda e: self._sc.bind_all("<MouseWheel>", _scroll_steps))
+        self._sc.bind("<Leave>", lambda e: self._sc.unbind_all("<MouseWheel>"))
 
-    # ──────────── PANEL: ANALISIS ────────────
     def _build_panel_analisis(self):
         f = self._panel("Analisis")
         self._ta = tk.Text(f, bg=BG3, fg=TEXT,
@@ -378,22 +372,18 @@ class DiferenciasFinitasApp(tk.Frame):
         ax.yaxis.label.set_color(MUTED)
         ax.grid(True, color=BORDER, linewidth=0.6, alpha=0.7)
 
-    # ──────────── CALCULAR PUNTO UNICO ────────────
     def _calcular_punto(self):
         try:
             fexpr = self.e_f.get().strip()
             x     = float(eval(self.e_x.get()))
             h     = float(eval(self.e_h.get()))
             v     = calcular_punto_unico(fexpr, x, h)
-
             self._render_pasos_punto(fexpr, x, h, v)
             self._render_analisis_punto(fexpr, x, h, v)
             self._show_tab("Paso a paso")
-
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
 
-    # ──────────── CALCULAR TABLA ────────────
     def _calcular_tabla(self):
         try:
             fexpr = self.e_f.get().strip()
@@ -403,11 +393,9 @@ class DiferenciasFinitasApp(tk.Frame):
             self._rows = rows
             self._render_tabla(rows)
             self._show_tab("Tabla")
-
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
 
-    # ──────────── GRAFICAR ────────────
     def _graficar(self):
         try:
             fexpr  = self.e_f.get().strip()
@@ -419,8 +407,6 @@ class DiferenciasFinitasApp(tk.Frame):
 
             xs = np.linspace(x_ref - 3, x_ref + 3, 400)
             ys = [f(xi) for xi in xs]
-
-            # derivada numerica en cada punto
             dy = []
             for xi in xs:
                 try:
@@ -434,8 +420,7 @@ class DiferenciasFinitasApp(tk.Frame):
                     dy.append(float("nan"))
 
             for ax in (self._ax1, self._ax2):
-                ax.clear()
-                self._style_ax(ax)
+                ax.clear(); self._style_ax(ax)
 
             self._ax1.plot(xs, ys, color=ACCENT, linewidth=2, label="f(x)")
             self._ax1.axhline(0, color=BORDER, linewidth=0.8)
@@ -443,8 +428,7 @@ class DiferenciasFinitasApp(tk.Frame):
                               linestyle="--", alpha=0.6, label=f"x={x_ref}")
             self._ax1.scatter([x_ref], [f(x_ref)], color=ORANGE, s=60, zorder=5)
             self._ax1.set_title("f(x)", color=TEXT, fontsize=9)
-            self._ax1.legend(facecolor=BG3, edgecolor=BORDER,
-                             labelcolor=TEXT, fontsize=8)
+            self._ax1.legend(facecolor=BG3, edgecolor=BORDER, labelcolor=TEXT, fontsize=8)
 
             self._ax2.plot(xs, dy, color=GREEN, linewidth=2,
                            label=f"f'(x) — {metodo}")
@@ -452,51 +436,42 @@ class DiferenciasFinitasApp(tk.Frame):
             self._ax2.axvline(x_ref, color=YELLOW, linewidth=1,
                               linestyle="--", alpha=0.6)
             self._ax2.set_title("f'(x) aproximada", color=TEXT, fontsize=9)
-            self._ax2.legend(facecolor=BG3, edgecolor=BORDER,
-                             labelcolor=TEXT, fontsize=8)
+            self._ax2.legend(facecolor=BG3, edgecolor=BORDER, labelcolor=TEXT, fontsize=8)
 
             self._canvas.draw()
             self._show_tab("Grafico")
-
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
 
-    # ──────────── RENDER: TABLA ────────────
     def _render_tabla(self, rows):
         for row in self._tree.get_children():
             self._tree.delete(row)
         for r in rows:
             self._tree.insert("", "end", values=(
-                f"{r['x']:.4f}",
-                f"{r['fx']:.6f}",
-                f"{r['fp1']:.6f}",
-                f"{r['fp2']:.6f}",
-                f"{r['fr1']:.6f}",
-                f"{r['fr2']:.6f}",
-                f"{r['fc1']:.6f}",
-                f"{r['fc2']:.6f}",
+                f"{r['x']:.4f}",   f"{r['fx']:.6f}",
+                f"{r['fp1']:.6f}", f"{r['fp2']:.6f}",
+                f"{r['fr1']:.6f}", f"{r['fr2']:.6f}",
+                f"{r['fc1']:.6f}", f"{r['fc2']:.6f}",
             ))
 
-    # ──────────── RENDER: PASO A PASO PUNTO UNICO ────────────
     def _render_pasos_punto(self, fexpr, x, h, v):
         for w in self._si.winfo_children():
             w.destroy()
 
-        # bloque config
         cfg = tk.Frame(self._si, bg=BG3,
                        highlightthickness=1, highlightbackground=BORDER)
         cfg.pack(fill=tk.X, padx=12, pady=(12, 8))
         tk.Label(cfg, text="Configuracion inicial", bg=BG3, fg=TEXT,
                  font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=14, pady=(10,4))
         for label, val, col in [
-            ("f(x)",      fexpr,     ACCENT),
-            ("x",         str(x),    ACCENT),
-            ("h (paso)",  str(h),    YELLOW),
-            ("f(x)",      f"{v['fx']:.8f}",    GREEN),
-            ("f(x+h)",    f"{v['fxph']:.8f}",  MUTED),
-            ("f(x+2h)",   f"{v['fx2ph']:.8f}", MUTED),
-            ("f(x-h)",    f"{v['fxmh']:.8f}",  MUTED),
-            ("f(x-2h)",   f"{v['fx2mh']:.8f}", MUTED),
+            ("f(x)",     fexpr,                  ACCENT),
+            ("x",        str(x),                 ACCENT),
+            ("h (paso)", str(h),                 YELLOW),
+            ("f(x)",     f"{v['fx']:.8f}",        GREEN),
+            ("f(x+h)",   f"{v['fxph']:.8f}",      MUTED),
+            ("f(x+2h)",  f"{v['fx2ph']:.8f}",     MUTED),
+            ("f(x-h)",   f"{v['fxmh']:.8f}",      MUTED),
+            ("f(x-2h)",  f"{v['fx2mh']:.8f}",     MUTED),
         ]:
             row = tk.Frame(cfg, bg=BG3)
             row.pack(anchor="w", padx=14, pady=1)
@@ -506,35 +481,31 @@ class DiferenciasFinitasApp(tk.Frame):
                      font=("Consolas", 11)).pack(side=tk.LEFT)
         tk.Frame(cfg, bg=BG3, height=8).pack()
 
-        # ── los 3 metodos como bloques
         metodos = [
-            ("PROGRESIVA", GREEN,
-             [
+            ("PROGRESIVA", GREEN, [
                 ("f'(x)",  f"[f(x+h) - f(x)] / h",
                  f"[{v['fxph']:.6f} - {v['fx']:.6f}] / {h}",
                  f"{v['fp1']:.8f}"),
                 ("f''(x)", f"[f(x+2h) - 2f(x+h) + f(x)] / h^2",
                  f"[{v['fx2ph']:.6f} - 2*{v['fxph']:.6f} + {v['fx']:.6f}] / {h}^2",
                  f"{v['fp2']:.8f}"),
-             ]),
-            ("REGRESIVA", PURPLE,
-             [
+            ]),
+            ("REGRESIVA", PURPLE, [
                 ("f'(x)",  f"[f(x) - f(x-h)] / h",
                  f"[{v['fx']:.6f} - {v['fxmh']:.6f}] / {h}",
                  f"{v['fr1']:.8f}"),
                 ("f''(x)", f"[f(x) - 2f(x-h) + f(x-2h)] / h^2",
                  f"[{v['fx']:.6f} - 2*{v['fxmh']:.6f} + {v['fx2mh']:.6f}] / {h}^2",
                  f"{v['fr2']:.8f}"),
-             ]),
-            ("CENTRAL", ACCENT,
-             [
+            ]),
+            ("CENTRAL", ACCENT, [
                 ("f'(x)",  f"[f(x+h) - f(x-h)] / (2h)",
                  f"[{v['fxph']:.6f} - {v['fxmh']:.6f}] / (2*{h})",
                  f"{v['fc1']:.8f}"),
                 ("f''(x)", f"[f(x+h) - 2f(x) + f(x-h)] / h^2",
                  f"[{v['fxph']:.6f} - 2*{v['fx']:.6f} + {v['fxmh']:.6f}] / {h}^2",
                  f"{v['fc2']:.8f}"),
-             ]),
+            ]),
         ]
 
         for nombre, color, lineas in metodos:
@@ -544,30 +515,28 @@ class DiferenciasFinitasApp(tk.Frame):
             inner = tk.Frame(outer, bg=BG2)
             inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-            # header
             hdr = tk.Frame(inner, bg=BG2)
             hdr.pack(anchor="w", padx=12, pady=(8,4))
             tk.Label(hdr, text=f" {nombre} ", bg=color, fg="#000",
                      font=("Segoe UI", 11, "bold"), padx=6, pady=2).pack(side=tk.LEFT)
-            tk.Label(hdr, text=f"  Ref: Caceres pag. 24",
+            tk.Label(hdr, text="  Ref: Caceres pag. 24",
                      bg=BG2, fg=MUTED, font=("Consolas", 10)).pack(side=tk.LEFT)
 
             for deriv, formula, sustit, resultado in lineas:
-                # formula
                 fr = tk.Frame(inner, bg=BG2)
                 fr.pack(anchor="w", padx=12, pady=(3,0))
                 tk.Label(fr, text=f"-- {deriv} = ", bg=BG2, fg=MUTED,
                          font=("Consolas", 11)).pack(side=tk.LEFT)
                 tk.Label(fr, text=formula, bg=BG2, fg=MUTED,
                          font=("Consolas", 11)).pack(side=tk.LEFT)
-                # sustitucion
+
                 fs = tk.Frame(inner, bg=BG2)
                 fs.pack(anchor="w", padx=24, pady=0)
                 tk.Label(fs, text="= ", bg=BG2, fg=TEXT,
                          font=("Consolas", 11)).pack(side=tk.LEFT)
                 tk.Label(fs, text=sustit, bg=BG2, fg=MUTED,
                          font=("Consolas", 10)).pack(side=tk.LEFT)
-                # resultado
+
                 fres = tk.Frame(inner, bg=BG2)
                 fres.pack(anchor="w", padx=24, pady=(0,4))
                 tk.Label(fres, text="= ", bg=BG2, fg=TEXT,
@@ -577,7 +546,6 @@ class DiferenciasFinitasApp(tk.Frame):
 
             tk.Frame(inner, bg=BG2, height=6).pack()
 
-    # ──────────── RENDER: ANALISIS ────────────
     def _render_analisis_punto(self, fexpr, x, h, v):
         ta = self._ta
         ta.config(state="normal")
@@ -588,30 +556,24 @@ class DiferenciasFinitasApp(tk.Frame):
 
         w("ANALISIS — DIFERENCIAS FINITAS\n", "title")
         w("Ref: Caceres, Modelado y Simulacion, 2 ed. 2026, pag. 24\n\n", "muted")
-
         w("PARAMETROS\n", "title")
         w(f"  f(x) = {fexpr}\n", "info")
         w(f"  x    = {x}\n", "info")
         w(f"  h    = {h}\n\n", "info")
-
         w("VALORES CALCULADOS\n", "title")
         w(f"  f(x)    = {v['fx']:.10f}\n")
         w(f"  f(x+h)  = {v['fxph']:.10f}\n")
         w(f"  f(x-h)  = {v['fxmh']:.10f}\n")
         w(f"  f(x+2h) = {v['fx2ph']:.10f}\n")
         w(f"  f(x-2h) = {v['fx2mh']:.10f}\n\n")
-
         w("PRIMERA DERIVADA f'(x)\n", "title")
         w(f"  Progresiva:  "); w(f"{v['fp1']:.8f}\n", "ok")
         w(f"  Regresiva:   "); w(f"{v['fr1']:.8f}\n", "info")
         w(f"  Central:     "); w(f"{v['fc1']:.8f}\n", "val")
-
         w("\nSEGUNDA DERIVADA f''(x)\n", "title")
         w(f"  Progresiva:  "); w(f"{v['fp2']:.8f}\n", "ok")
         w(f"  Regresiva:   "); w(f"{v['fr2']:.8f}\n", "info")
         w(f"  Central:     "); w(f"{v['fc2']:.8f}\n", "val")
-
-        # comparar errores entre metodos usando central como referencia
         w("\nCOMPARACION (central como referencia)\n", "title")
         err_p = abs(v['fp1'] - v['fc1'])
         err_r = abs(v['fr1'] - v['fc1'])
@@ -623,9 +585,6 @@ class DiferenciasFinitasApp(tk.Frame):
         ta.config(state="disabled")
 
 
-# ══════════════════════════════════════
-# ENTRY POINT
-# ══════════════════════════════════════
 if __name__ == "__main__":
     root = tk.Tk()
     app  = DiferenciasFinitasApp(root, standalone=True)
