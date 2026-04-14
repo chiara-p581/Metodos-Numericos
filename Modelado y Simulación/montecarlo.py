@@ -1,23 +1,34 @@
 """
 Metodo de Montecarlo — Integracion Numerica
 ============================================
-Formulas implementadas:
+Formulas implementadas (segun profesor):
 
-  1D:
-    x_i ~ U(a, b)
+  1D (metodo promedio):
+    x_i ~ U(a, b),  f vectorizada con lambdify
     I_hat   = (b-a) * mean(f(x_i))
-    sigma_f = sqrt( 1/(n-1) * sum((f(x_i) - f_bar)^2) )
+    sigma_f = sqrt( 1/(n-1) * sum((f(x_i) - f_bar)^2) )   [ddof=1]
     EE      = sigma_f / sqrt(n)
     sigma_I = (b-a) * sigma_f / sqrt(n)
     IC      = I_hat +- z * sigma_I
 
-  2D:
+  1D (hit-or-miss):
+    Se genera rectangulo contenedor [a,b] x [y_min, y_max]
+    rect_area = (b-a) * (y_max - y_min)
+    I_hat = (exitos / n) * rect_area
+
+  2D (limites fijos):
     x_i ~ U(a,b),  y_i ~ U(c,d)
-    V       = (b-a)(d-c)
-    I_hat   = V * mean(f(x_i, y_i))
-    sigma_f = sqrt( 1/(n-1) * sum((f(x_i,y_i) - f_bar)^2) )
-    sigma_I = V * sigma_f / sqrt(n)
+    area    = (b-a)(d-c)
+    I_hat   = area * mean(f(x_i, y_i))
+    sigma_f = std(f(x_i,y_i), ddof=1)
+    sigma_I = area * sigma_f / sqrt(n)
     IC      = I_hat +- z * sigma_I
+
+  2D (limites variables en y: c(x), d(x)):
+    valores_i = (d(x_i) - c(x_i)) * f(x_i, y_i)
+    I_hat = (b-a) * mean(valores_i)
+
+  IC usa distribucion t de Student (como en ventana estadistica del profesor)
 
   Nivel de confianza: usuario elige o ingresa manualmente -> z calculado automaticamente
 """
@@ -27,8 +38,10 @@ from tkinter import messagebox
 import math
 import numpy as np
 import sympy as sp
+from scipy import stats
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from numpy.polynomial.legendre import leggauss
 
 
 # ══════════════════════════════════════════════════════
@@ -94,31 +107,49 @@ EJERCICIOS_REF = [
 
 
 # ══════════════════════════════════════════════════════
-# ENTORNO DE EVALUACION SEGURO
+# FUNCIONES AUXILIARES DE EVALUACION
 # ══════════════════════════════════════════════════════
-def _make_env(x_val=None, y_val=None):
+
+def _make_lambdify_1d(fexpr: str):
+    """
+    Crea una funcion vectorizada usando sp.lambdify (metodo del profesor).
+    Retorna f tal que f(xs_array) -> array de valores.
+    """
+    x = sp.Symbol('x')
+    f_sym = sp.sympify(fexpr)
+    return sp.lambdify(x, f_sym, "numpy")
+
+
+def _make_lambdify_2d(fexpr: str):
+    """
+    Crea una funcion vectorizada 2D usando sp.lambdify.
+    Retorna f tal que f(xs, ys) -> array de valores.
+    """
+    x, y = sp.symbols('x y')
+    f_sym = sp.sympify(fexpr)
+    return sp.lambdify((x, y), f_sym, "numpy")
+
+
+def _evaluar_expr_x(expr: str, x_val: float) -> float:
+    """Evalua una expresion de x en un valor escalar (para limites variables)."""
     env = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
-    env["np"] = np
-    if x_val is not None:
-        env["x"] = x_val
-    if y_val is not None:
-        env["y"] = y_val
-    return env
-
-def _evaluar(expr: str, x_val, y_val=None) -> float:
+    env["x"] = x_val
     try:
-        return float(eval(expr, {"__builtins__": {}}, _make_env(x_val, y_val)))
-    except ZeroDivisionError:
-        return 0.0
+        return float(eval(expr, {"__builtins__": {}}, env))
+    except Exception as e:
+        raise ValueError(f"Error evaluando limite '{expr}' con x={x_val}: {e}")
 
 
 # ══════════════════════════════════════════════════════
-# LOGICA MONTECARLO
+# LOGICA MONTECARLO — METODO PROMEDIO 1D
 # ══════════════════════════════════════════════════════
 def montecarlo_1d(fexpr: str, a: float, b: float, n: int,
                   nivel: str, z: float, semilla=None) -> dict:
     """
-    Montecarlo 1D.
+    Montecarlo 1D — Metodo promedio (como en el script del profesor).
+    
+    Usa sp.lambdify para evaluacion vectorizada con numpy.
+    
     Formulas:
       I_hat   = (b-a) * mean(f(x_i))
       sigma_f = std(f(x_i), ddof=1)
@@ -126,9 +157,12 @@ def montecarlo_1d(fexpr: str, a: float, b: float, n: int,
       sigma_I = (b-a) * EE
       IC      = I_hat +/- z * sigma_I
     """
-    rng   = np.random.default_rng(semilla)
-    xs    = rng.uniform(a, b, n)
-    fvals = np.array([_evaluar(fexpr, xi) for xi in xs], dtype=float)
+    rng = np.random.default_rng(semilla)
+    xs  = rng.uniform(a, b, n)
+
+    # Evaluacion vectorizada con lambdify (metodo del profesor)
+    f = _make_lambdify_1d(fexpr)
+    fvals = np.nan_to_num(f(xs)).astype(float)
 
     f_bar   = float(np.mean(fvals))
     vol     = b - a
@@ -138,6 +172,25 @@ def montecarlo_1d(fexpr: str, a: float, b: float, n: int,
     sigma_I = vol * EE
     margen  = z * sigma_I
 
+    # Hit-or-miss (adicional, como en el profesor)
+    xs_dense = np.linspace(a, b, 1000)
+    ys_dense = np.nan_to_num(f(xs_dense))
+    y_min = min(0.0, float(np.min(ys_dense)))
+    y_max = max(0.0, float(np.max(ys_dense)))
+    ys_hom = rng.uniform(y_min, y_max, n)
+    success_mask = ((ys_hom >= 0) & (ys_hom <= fvals)) | ((ys_hom <= 0) & (ys_hom >= fvals))
+    rect_area = (b - a) * (y_max - y_min)
+    I_hitormiss = float(np.sum(success_mask) / n * rect_area)
+
+    # Gauss-Legendre como referencia (metodo del profesor)
+    try:
+        n_gauss = 5
+        nodes, weights = leggauss(n_gauss)
+        trans_nodes = 0.5 * (nodes + 1) * (b - a) + a
+        gauss_val = float(0.5 * (b - a) * np.sum(weights * f(trans_nodes)))
+    except Exception:
+        gauss_val = None
+
     return {
         "dim": "1D",
         "fexpr": fexpr,
@@ -145,8 +198,12 @@ def montecarlo_1d(fexpr: str, a: float, b: float, n: int,
         "n": n, "vol": vol,
         "nivel": nivel, "z": z,
         "xs": xs, "fvals": fvals,
+        "ys_hom": ys_hom, "success_mask": success_mask,
+        "y_min": y_min, "y_max": y_max,
         "f_bar": f_bar,
         "I_hat": I_hat,
+        "I_hitormiss": I_hitormiss,
+        "gauss_val": gauss_val,
         "sigma_f": sigma_f,
         "EE": EE,
         "sigma_I": sigma_I,
@@ -156,47 +213,114 @@ def montecarlo_1d(fexpr: str, a: float, b: float, n: int,
     }
 
 
-def montecarlo_2d(fexpr: str, a: float, b: float, c: float, d: float,
+# ══════════════════════════════════════════════════════
+# LOGICA MONTECARLO 2D
+# ══════════════════════════════════════════════════════
+def montecarlo_2d(fexpr: str, a: float, b: float, c_expr: str, d_expr: str,
                   n: int, nivel: str, z: float, semilla=None) -> dict:
     """
-    Montecarlo 2D (integral doble sobre dominio rectangular).
-    Formulas:
-      V       = (b-a)(d-c)
-      I_hat   = V * mean(f(x_i, y_i))
-      sigma_f = std(f(x_i,y_i), ddof=1)
-      sigma_I = V * sigma_f / sqrt(n)
-      IC      = I_hat +/- z * sigma_I
+    Montecarlo 2D.
+    
+    - Si c y d son constantes numericas: metodo directo del profesor
+        area = (b-a)*(d-c),  I_hat = area * mean(f(xi, yi))
+    - Si c y d son expresiones en x: limites variables
+        valores_i = (d(xi)-c(xi)) * f(xi, yi),  I_hat = (b-a) * mean(valores_i)
+    
+    Usa sp.lambdify para evaluacion vectorizada.
+    IC con z fijo (igual que 1D).
     """
-    rng   = np.random.default_rng(semilla)
-    xs    = rng.uniform(a, b, n)
-    ys    = rng.uniform(c, d, n)
-    fvals = np.array([_evaluar(fexpr, xi, yi)
-                      for xi, yi in zip(xs, ys)], dtype=float)
+    rng = np.random.default_rng(semilla)
+    f   = _make_lambdify_2d(fexpr)
 
-    f_bar   = float(np.mean(fvals))
-    vol     = (b - a) * (d - c)
-    I_hat   = vol * f_bar
-    sigma_f = float(np.std(fvals, ddof=1))
-    EE      = sigma_f / math.sqrt(n)
-    sigma_I = vol * EE
-    margen  = z * sigma_I
+    # Determinar si los limites son constantes o funciones de x
+    def _es_constante(expr_str: str) -> tuple:
+        """Retorna (True, valor_float) si es constante, (False, None) si no."""
+        env = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
+        env["pi"] = math.pi; env["e"] = math.e
+        try:
+            val = float(eval(expr_str.strip(), {"__builtins__": {}}, env))
+            return True, val
+        except Exception:
+            return False, None
 
-    return {
-        "dim": "2D",
-        "fexpr": fexpr,
-        "a": a, "b": b, "c": c, "d": d,
-        "n": n, "vol": vol,
-        "nivel": nivel, "z": z,
-        "xs": xs, "ys": ys, "fvals": fvals,
-        "f_bar": f_bar,
-        "I_hat": I_hat,
-        "sigma_f": sigma_f,
-        "EE": EE,
-        "sigma_I": sigma_I,
-        "margen": margen,
-        "ic_lo": I_hat - margen,
-        "ic_hi": I_hat + margen,
-    }
+    c_cte, c_val = _es_constante(c_expr)
+    d_cte, d_val = _es_constante(d_expr)
+
+    if c_cte and d_cte:
+        # ── Limites fijos: metodo directo del profesor ──
+        c_num = c_val
+        d_num = d_val
+        xs = rng.uniform(a, b, n)
+        ys = rng.uniform(c_num, d_num, n)
+        fvals = np.nan_to_num(f(xs, ys)).astype(float)
+
+        area    = (b - a) * (d_num - c_num)
+        f_bar   = float(np.mean(fvals))
+        I_hat   = area * f_bar
+        sigma_f = float(np.std(fvals, ddof=1))
+        EE      = sigma_f / math.sqrt(n)
+        sigma_I = area * EE
+        margen  = z * sigma_I
+        vol     = area
+
+        return {
+            "dim": "2D",
+            "fexpr": fexpr,
+            "a": a, "b": b,
+            "c": c_expr, "d": d_expr,
+            "n": n, "vol": vol,
+            "nivel": nivel, "z": z,
+            "xs": xs, "ys": ys, "fvals": fvals,
+            "f_bar": f_bar,
+            "I_hat": I_hat,
+            "sigma_f": sigma_f,
+            "EE": EE,
+            "sigma_I": sigma_I,
+            "margen": margen,
+            "ic_lo": I_hat - margen,
+            "ic_hi": I_hat + margen,
+            "limites_variables": False,
+        }
+    else:
+        # ── Limites variables en y: formula con pesos ──
+        xs = rng.uniform(a, b, n)
+        ys     = np.empty(n)
+        pesos  = np.empty(n)
+        for i, xi in enumerate(xs):
+            c_i = _evaluar_expr_x(c_expr, xi)
+            d_i = _evaluar_expr_x(d_expr, xi)
+            ys[i]    = rng.uniform(c_i, d_i)
+            pesos[i] = d_i - c_i
+
+        fvals   = np.nan_to_num(f(xs, ys)).astype(float)
+        valores = pesos * fvals
+
+        f_bar   = float(np.mean(valores))
+        vol     = b - a
+        I_hat   = vol * f_bar
+        sigma_f = float(np.std(valores, ddof=1))
+        EE      = sigma_f / math.sqrt(n)
+        sigma_I = vol * EE
+        margen  = z * sigma_I
+
+        return {
+            "dim": "2D",
+            "fexpr": fexpr,
+            "a": a, "b": b,
+            "c": c_expr, "d": d_expr,
+            "n": n, "vol": vol,
+            "nivel": nivel, "z": z,
+            "xs": xs, "ys": ys, "fvals": fvals,
+            "f_bar": f_bar,
+            "I_hat": I_hat,
+            "sigma_f": sigma_f,
+            "EE": EE,
+            "sigma_I": sigma_I,
+            "margen": margen,
+            "ic_lo": I_hat - margen,
+            "ic_hi": I_hat + margen,
+            "limites_variables": True,
+        }
 
 
 def _integral_analitica_1d(fexpr: str, a: float, b: float):
@@ -212,18 +336,27 @@ def _integral_analitica_1d(fexpr: str, a: float, b: float):
 
 def _convergencia(fexpr: str, a: float, b: float, n_max: int,
                   semilla=None, pasos: int = 55):
-    rng    = np.random.default_rng(semilla)
-    ns     = np.unique(np.geomspace(1, n_max, pasos).astype(int))
-    I_vals = []
+    """
+    Convergencia acumulada — usa lambdify como el profesor.
+    Retorna (ns, I_vals, std_vals) para poder graficar banda +-1 std.
+    """
+    rng   = np.random.default_rng(semilla)
+    f     = _make_lambdify_1d(fexpr)
+    ns    = np.unique(np.geomspace(1, n_max, pasos).astype(int))
+    I_vals   = []
+    std_vals = []
     for n in ns:
         xs    = rng.uniform(a, b, n)
-        fvals = np.array([_evaluar(fexpr, xi) for xi in xs], dtype=float)
-        I_vals.append((b - a) * float(np.mean(fvals)))
-    return ns, np.array(I_vals)
+        fvals = np.nan_to_num(f(xs)).astype(float)
+        mean_ = float(np.mean(fvals)) * (b - a)
+        std_  = (float(np.std(fvals, ddof=1)) if n > 1 else 0.0) * (b - a)
+        I_vals.append(mean_)
+        std_vals.append(std_)
+    return ns, np.array(I_vals), np.array(std_vals)
 
 
 # ══════════════════════════════════════════════════════
-# HELPERS DE WIDGETS
+# HELPERS DE WIDGETS  (sin cambios de diseno)
 # ══════════════════════════════════════════════════════
 def _lbl(parent, text, fg=MUTED, font=("Consolas", 11), bg=None):
     return tk.Label(parent, text=text, bg=bg or BG2, fg=fg, font=font)
@@ -429,10 +562,10 @@ class MontecarloApp(tk.Frame):
         self._eb = _labeled_entry(p, "b  — limite superior  x", "pi")
 
         self._frm2d = tk.Frame(p, bg=BG2)
-        _lbl(self._frm2d, "c  — limite inferior  y").pack(anchor="w")
+        _lbl(self._frm2d, "c  — limite inferior  y  (numero o expr. en x)").pack(anchor="w")
         self._ec = _entry(self._frm2d, "0")
         self._ec.pack(fill=tk.X, ipady=6, pady=(2, 8))
-        _lbl(self._frm2d, "d  — limite superior  y").pack(anchor="w")
+        _lbl(self._frm2d, "d  — limite superior  y  (numero o expr. en x)").pack(anchor="w")
         self._ed = _entry(self._frm2d, "1")
         self._ed.pack(fill=tk.X, ipady=6, pady=(2, 8))
         tk.Frame(p, bg=BORDER, height=1).pack(fill=tk.X, pady=6)
@@ -600,6 +733,8 @@ class MontecarloApp(tk.Frame):
     # ─────────────────────────────────────────────────
     def _parse_float(self, s: str, campo: str) -> float:
         env = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
+        env["pi"] = math.pi
+        env["e"]  = math.e
         try:
             return float(eval(s.strip(), {"__builtins__": {}}, env))
         except Exception as exc:
@@ -656,9 +791,9 @@ class MontecarloApp(tk.Frame):
                 r = montecarlo_1d(fexpr, a, b, n, nivel, z, semilla)
                 r["I_analitica"] = _integral_analitica_1d(fexpr, a, b)
             else:
-                c_val = self._parse_float(self._ec.get(), "c")
-                d_val = self._parse_float(self._ed.get(), "d")
-                r = montecarlo_2d(fexpr, a, b, c_val, d_val, n, nivel, z, semilla)
+                c_expr = self._ec.get().strip()
+                d_expr = self._ed.get().strip()
+                r = montecarlo_2d(fexpr, a, b, c_expr, d_expr, n, nivel, z, semilla)
                 r["I_analitica"] = None
 
             self._r = r
@@ -688,18 +823,22 @@ class MontecarloApp(tk.Frame):
                 f"I  =  integral de {r['a']:.4g} a {r['b']:.4g}  "
                 f"de  {r['fexpr']}  dx", ACCENT)
             _cformula(c, f"vol = b - a = {r['vol']:.6g}", MUTED)
+            # Mostrar hit-or-miss y Gauss como referencia
+            if r.get("I_hitormiss") is not None:
+                _cigual(c, "I_hat  (metodo promedio)", f"{r['I_hat']:.8f}", GREEN)
+                _cigual(c, "I_hat  (hit-or-miss)",     f"{r['I_hitormiss']:.8f}", TEAL)
+                if r.get("gauss_val") is not None:
+                    _cigual(c, "Gauss-Legendre (ref.)", f"{r['gauss_val']:.8f}", PURPLE)
+                _gap(c, 4)
         else:
             _cformula(c,
                 f"I  =  integral doble de  {r['fexpr']}", ACCENT)
             _cformula(c,
                 f"x en [{r['a']:.4g}, {r['b']:.4g}]   "
-                f"y en [{r['c']:.4g}, {r['d']:.4g}]", ACCENT)
-            _cformula(c,
-                f"V = (b-a)(d-c) = "
-                f"({r['b']:.4g}-{r['a']:.4g}) x ({r['d']:.4g}-{r['c']:.4g})"
-                f" = {r['vol']:.6g}", MUTED)
-        _cformula(c, f"n  =  {r['n']:,}  muestras", MUTED)
-        _gap(c, 4)
+                f"y en [{r['c']}, {r['d']}]", ACCENT)
+            if r.get("limites_variables"):
+                _cformula(c, "Limites de y variables — formula con pesos", YELLOW)
+            _cformula(c, f"vol = {r['vol']:.6g}", MUTED)
         _cbox(c, f"I_hat  =  {r['I_hat']:.8f}", GREEN)
         _gap(c)
 
@@ -718,7 +857,7 @@ class MontecarloApp(tk.Frame):
         _cigual(c, "f_bar  (media de f(x_i))",       f"{r['f_bar']:.8f}", ACCENT)
         _csep(c)
         _cigual(c, "sigma_f  (desv. std de f(x_i))", f"{r['sigma_f']:.8f}", PURPLE)
-        _cformula(c, "sigma_f = sqrt( sum(f(xi)-f_bar)^2 / (n-1) )", MUTED)
+        _cformula(c, "sigma_f = sqrt( sum(f(xi)-f_bar)^2 / (n-1) )  [ddof=1]", MUTED)
         _csep(c)
         _cigual(c, "EE  = sigma_f / sqrt(n)",          f"{r['EE']:.8f}", ORANGE)
         _csep(c)
@@ -754,6 +893,29 @@ class MontecarloApp(tk.Frame):
                   GREEN if dentro else YELLOW)
         _gap(c)
 
+        # IC con t de Student (como en ventana estadistica del profesor)
+        if r["n"] > 1:
+            _seccion(si,
+                     f"IC con t de Student al {r['nivel']}  (n={r['n']:,})",
+                     ORANGE)
+            c = _card(si, ORANGE)
+            conf_num = float(r["nivel"].replace("%","")) / 100.0
+            t_val    = float(stats.t.ppf(0.5 + conf_num / 2.0, r["n"] - 1))
+            # El IC con t usa el error estandar de la media de f(xi)*vol
+            stderr_I = r["sigma_I"]   # = vol * sigma_f / sqrt(n), igual que sigma_I
+            ic_t_lo  = r["I_hat"] - t_val * stderr_I
+            ic_t_hi  = r["I_hat"] + t_val * stderr_I
+            _cformula(c, f"t({r['nivel']}, gl={r['n']-1}) = {t_val:.4f}  (vs z = {r['z']:.4f})", MUTED)
+            _cformula(c, "IC_t = I_hat +/- t * sigma_I")
+            _cbox(c,
+                  f"IC_t {r['nivel']}:   "
+                  f"[ {ic_t_lo:.6f}  ,  {ic_t_hi:.6f} ]",
+                  ORANGE)
+            _cformula(c,
+                "Nota: con n grande t -> z y ambos IC coinciden.",
+                MUTED)
+            _gap(c)
+
     # ─────────────────────────────────────────────────
     # RENDER: PASO A PASO
     # ─────────────────────────────────────────────────
@@ -778,15 +940,19 @@ class MontecarloApp(tk.Frame):
         else:
             _cformula(c,
                 f"I = integral de {r['a']:.4g} a {r['b']:.4g}  "
-                f"integral de {r['c']:.4g} a {r['d']:.4g}  "
+                f"integral de {r['c']} a {r['d']}  "
                 f"f(x,y) dy dx", ACCENT)
             _cformula(c, f"f(x,y) = {r['fexpr']}", ACCENT)
-            _cformula(c,
-                f"V = (b-a)(d-c) = {r['vol']:.6g}", GREEN)
+            if r.get("limites_variables"):
+                _cformula(c, "Limites variables: se usa formula con pesos (d(x)-c(x))*f(x,y)", YELLOW)
+            else:
+                _cformula(c,
+                    f"area = (b-a)(d-c) = {r['vol']:.6g}", GREEN)
 
         # PASO 2
-        _seccion(si, "PASO 2 — Generar muestras uniformes", PURPLE)
+        _seccion(si, "PASO 2 — Generar muestras uniformes con lambdify", PURPLE)
         c = _card(si, PURPLE)
+        _cformula(c, "Evaluacion vectorizada: sp.lambdify(x, f_sym, 'numpy')", TEAL)
         if dim == "1D":
             _cformula(c,
                 f"x_i  ~  U({r['a']:.4g}, {r['b']:.4g})"
@@ -794,7 +960,7 @@ class MontecarloApp(tk.Frame):
         else:
             _cformula(c,
                 f"x_i ~ U({r['a']:.4g}, {r['b']:.4g})   "
-                f"y_i ~ U({r['c']:.4g}, {r['d']:.4g})",
+                f"y_i ~ U({r['c']}, {r['d']})",
                 PURPLE)
         _cformula(c, f"n = {r['n']:,}  muestras generadas")
         _ctitulo(c, "Primeras 5 muestras:", MUTED)
@@ -812,6 +978,21 @@ class MontecarloApp(tk.Frame):
         if r["n"] > 5:
             _cformula(c, f"... ({r['n']-5:,} muestras mas)", MUTED)
 
+        # PASO 2b — Hit-or-miss (solo 1D)
+        if dim == "1D" and r.get("I_hitormiss") is not None:
+            _seccion(si, "PASO 2b — Hit-or-miss (metodo de puntos de exito)", TEAL)
+            c = _card(si, TEAL)
+            _cformula(c, "Rectangulo contenedor: [a,b] x [y_min, y_max]", TEAL)
+            _cformula(c, f"y_min = {r['y_min']:.6f}   y_max = {r['y_max']:.6f}", MUTED)
+            rect = (r["b"] - r["a"]) * (r["y_max"] - r["y_min"])
+            exitos = int(np.sum(r["success_mask"]))
+            _cformula(c, f"rect_area = (b-a) * (y_max - y_min) = {rect:.6f}", MUTED)
+            _cformula(c, f"Exitos = {exitos:,}   /   n = {r['n']:,}", MUTED)
+            _cformula(c, "I_hm = (exitos / n) * rect_area")
+            _cbox(c, f"I_hm = {r['I_hitormiss']:.8f}", TEAL)
+            if r.get("gauss_val") is not None:
+                _cformula(c, f"Gauss-Legendre (5 pts, referencia) = {r['gauss_val']:.8f}", PURPLE)
+
         # PASO 3
         _seccion(si, "PASO 3 — Media de f(x_i)", GREEN)
         c = _card(si, GREEN)
@@ -821,21 +1002,24 @@ class MontecarloApp(tk.Frame):
         _cbox(c, f"f_bar  =  {r['f_bar']:.8f}", GREEN)
 
         # PASO 4
-        _seccion(si, "PASO 4 — Integral estimada", ACCENT)
+        _seccion(si, "PASO 4 — Integral estimada (metodo promedio)", ACCENT)
         c = _card(si, ACCENT)
-        _cformula(c, "I_hat  =  vol * f_bar")
-        _cformula(c,
-            f"       =  {r['vol']:.6g}  x  {r['f_bar']:.8f}")
+        if dim == "2D" and not r.get("limites_variables"):
+            _cformula(c, "I_hat  =  area * mean(f(xi, yi))")
+            _cformula(c,
+                f"       =  {r['vol']:.6g}  x  {r['f_bar']:.8f}")
+        else:
+            _cformula(c, "I_hat  =  vol * f_bar")
+            _cformula(c,
+                f"       =  {r['vol']:.6g}  x  {r['f_bar']:.8f}")
         _cbox(c, f"I_hat  =  {r['I_hat']:.8f}", ACCENT)
 
         # PASO 5
-        _seccion(si, "PASO 5 — Desvio estandar de f(x_i)  -->  sigma_f", ORANGE)
+        _seccion(si, "PASO 5 — Desvio estandar de f(x_i)  -->  sigma_f  [ddof=1]", ORANGE)
         c = _card(si, ORANGE)
         _cformula(c,
             "sigma_f  =  sqrt( (1/(n-1)) * sum( (f(xi) - f_bar)^2 ) )")
-        _cformula(c,
-            "           desv. std de la FUNCION evaluada en cada muestra",
-            MUTED)
+        _cformula(c, "                                           ^^ ddof=1", TEAL)
         _cbox(c, f"sigma_f  =  {r['sigma_f']:.8f}", ORANGE)
 
         # PASO 6
@@ -878,6 +1062,31 @@ class MontecarloApp(tk.Frame):
               f"[ {r['ic_lo']:.6f} ,  {r['ic_hi']:.6f} ]",
               TEAL)
 
+        # PASO 7b — IC con t de Student
+        if r["n"] > 1:
+            _seccion(si,
+                     f"PASO 7b — IC con t de Student al {r['nivel']} (metodo del profesor)",
+                     ORANGE)
+            c = _card(si, ORANGE)
+            conf_num = float(r["nivel"].replace("%","")) / 100.0
+            t_val    = float(stats.t.ppf(0.5 + conf_num / 2.0, r["n"] - 1))
+            ic_t_lo  = r["I_hat"] - t_val * r["sigma_I"]
+            ic_t_hi  = r["I_hat"] + t_val * r["sigma_I"]
+            _cformula(c, "El profesor usa dist. t de Student para IC exacto:")
+            _cformula(c,
+                f"t({r['nivel']}, gl = n-1 = {r['n']-1}) = {t_val:.6f}")
+            _cformula(c, "IC_t = I_hat +/- t * sigma_I")
+            _cformula(c,
+                f"     = {r['I_hat']:.6f} +/- {t_val:.4f} x {r['sigma_I']:.6f}")
+            _cbox(c,
+                  f"IC_t {r['nivel']}:  "
+                  f"[ {ic_t_lo:.6f} ,  {ic_t_hi:.6f} ]",
+                  ORANGE)
+            _cformula(c,
+                f"Con n={r['n']:,}: z={r['z']:.4f}  vs  t={t_val:.4f}  "
+                f"(diferencia = {abs(t_val - r['z']):.6f})",
+                MUTED)
+
         # PASO 8 (solo si hay exacto)
         if r.get("I_analitica") is not None:
             _seccion(si, "PASO 8 — Verificacion con valor exacto", GREEN)
@@ -900,26 +1109,41 @@ class MontecarloApp(tk.Frame):
     # RENDER: CONVERGENCIA
     # ─────────────────────────────────────────────────
     def _render_convergencia(self, r: dict):
+        """
+        Convergencia con banda +-1 std acumulada (metodo del profesor).
+        """
         ax = self._ax_conv
         ax.clear()
         _style_ax(ax)
         try:
-            ns, I_vals = _convergencia(r["fexpr"], r["a"], r["b"], r["n"])
+            s_str   = self._esemilla.get().strip()
+            semilla = int(s_str) if s_str else None
+            ns, I_vals, std_vals = _convergencia(
+                r["fexpr"], r["a"], r["b"], r["n"], semilla)
+
             ax.plot(ns, I_vals, color=ACCENT, linewidth=1.5,
-                    label="I estimada")
+                    label="MC promedio acumulado")
+
+            # Banda +-1 std acumulada (igual que el profesor)
+            ax.fill_between(ns,
+                            I_vals - std_vals,
+                            I_vals + std_vals,
+                            color=MUTED, alpha=0.25,
+                            label="±1 std acumulado")
+
             if r.get("I_analitica") is not None:
                 ax.axhline(r["I_analitica"], color=GREEN,
                            linewidth=1.5, linestyle="--",
                            label=f"Exacto = {r['I_analitica']:.6f}")
-            z_   = r["z"]
-            vol_ = r["b"] - r["a"]
-            sig_ = r["sigma_f"] / np.sqrt(ns.astype(float)) * vol_
-            ax.fill_between(ns, I_vals - z_*sig_, I_vals + z_*sig_,
-                            alpha=0.15, color=TEAL,
-                            label=f"Banda IC {r['nivel']}")
+
+            if r.get("gauss_val") is not None:
+                ax.axhline(r["gauss_val"], color=PURPLE,
+                           linewidth=1.2, linestyle=":",
+                           label=f"Gauss-Legendre = {r['gauss_val']:.6f}")
+
             ax.set_xscale("log")
             ax.set_xlabel("n  (escala log)", color=MUTED, fontsize=9)
-            ax.set_ylabel("I estimada", color=MUTED, fontsize=9)
+            ax.set_ylabel("Estimacion acumulada", color=MUTED, fontsize=9)
             ax.set_title(
                 f"Convergencia  |  f(x) = {r['fexpr']}  "
                 f"[{r['a']:.3g}, {r['b']:.3g}]",
@@ -936,22 +1160,44 @@ class MontecarloApp(tk.Frame):
     # RENDER: DISTRIBUCION
     # ─────────────────────────────────────────────────
     def _render_distribucion(self, r: dict):
+        """
+        Histograma con curva normal superpuesta (metodo del profesor).
+        Ajustado por volumen: muestra f(xi)*(b-a).
+        """
         ax = self._ax_dist
         ax.clear()
         _style_ax(ax)
-        ax.hist(r["fvals"], bins=40, color=PURPLE, alpha=0.75,
-                edgecolor=BG, label="f(x_i)")
-        ax.axvline(r["f_bar"], color=YELLOW, linewidth=2,
-                   label=f"f_bar = {r['f_bar']:.4f}")
-        ax.axvline(r["f_bar"] + r["sigma_f"], color=ORANGE,
+
+        vol    = r["vol"]
+        data_v = r["fvals"] * vol   # ajustado por volumen, como en el profesor
+
+        media  = float(np.mean(data_v))
+        std_v  = float(np.std(data_v, ddof=1))
+
+        n_bins = min(40, max(5, r["n"] // 50))
+        ax.hist(data_v, bins=n_bins, color=PURPLE, alpha=0.75,
+                edgecolor=BG, density=True,
+                label="f(x_i) * vol")
+
+        # Curva normal superpuesta (metodo del profesor)
+        if std_v > 0:
+            x_norm = np.linspace(data_v.min(), data_v.max(), 300)
+            y_norm = stats.norm.pdf(x_norm, media, std_v)
+            ax.plot(x_norm, y_norm, color=ORANGE, linewidth=2,
+                    label="Distribucion Normal ajustada")
+
+        ax.axvline(media, color=YELLOW, linewidth=2,
+                   label=f"Media = {media:.4f}")
+        ax.axvline(media + std_v, color=GREEN,
                    linewidth=1.2, linestyle="--",
-                   label="f_bar +/- sigma_f")
-        ax.axvline(r["f_bar"] - r["sigma_f"], color=ORANGE,
+                   label="Media ±1 std")
+        ax.axvline(media - std_v, color=GREEN,
                    linewidth=1.2, linestyle="--")
-        ax.set_xlabel("f(x_i)", color=MUTED, fontsize=9)
-        ax.set_ylabel("Frecuencia", color=MUTED, fontsize=9)
+
+        ax.set_xlabel("f(x_i) * (b-a)", color=MUTED, fontsize=9)
+        ax.set_ylabel("Densidad", color=MUTED, fontsize=9)
         ax.set_title(
-            f"Distribucion de f(x_i)  |  "
+            f"Distribucion muestral  |  "
             f"sigma_f = {r['sigma_f']:.4f}   n = {r['n']:,}",
             color=TEXT, fontsize=10, pad=8)
         ax.legend(facecolor=BG3, edgecolor=BORDER,
@@ -967,16 +1213,48 @@ class MontecarloApp(tk.Frame):
         _style_ax(ax)
         N_plot = min(2000, len(r["xs"]))
         idx    = np.random.choice(len(r["xs"]), N_plot, replace=False)
-        ax.scatter(r["xs"][idx], r["fvals"][idx],
-                   color=ACCENT, s=4, alpha=0.5,
-                   label=f"{N_plot:,} / {len(r['xs']):,} puntos")
+
+        if r["dim"] == "1D":
+            # 1D: scatter x vs f(x), con curva real encima
+            ax.scatter(r["xs"][idx], r["fvals"][idx],
+                       color=ACCENT, s=4, alpha=0.5,
+                       label=f"{N_plot:,} / {len(r['xs']):,} puntos")
+            # Graficar la curva real con lambdify
+            try:
+                f     = _make_lambdify_1d(r["fexpr"])
+                x_plt = np.linspace(r["a"], r["b"], 500)
+                y_plt = np.nan_to_num(f(x_plt))
+                ax.plot(x_plt, y_plt, color=GREEN, linewidth=1.5,
+                        label=f"f(x)={r['fexpr']}", zorder=3)
+                # Relleno bajo la curva
+                ax.fill_between(x_plt, 0, y_plt,
+                                color=GREEN, alpha=0.07)
+                # Puntos de hit-or-miss (solo algunos)
+                if "success_mask" in r:
+                    sm  = r["success_mask"][idx]
+                    ys_h = r["ys_hom"][idx]
+                    ax.scatter(r["xs"][idx][~sm], ys_h[~sm],
+                               color=RED, s=3, alpha=0.3, label="H-o-M fallidos")
+                    ax.scatter(r["xs"][idx][sm],  ys_h[sm],
+                               color=TEAL, s=3, alpha=0.3, label="H-o-M exitos")
+            except Exception:
+                pass
+        else:
+            # 2D: scatter coloreado por f(x,y)
+            sc = ax.scatter(r["xs"][idx], r["ys"][idx],
+                            c=r["fvals"][idx], cmap="viridis",
+                            s=5, alpha=0.6,
+                            label=f"{N_plot:,} puntos")
+            self._fig_disp.colorbar(sc, ax=ax, label="f(x,y)")
+
         ax.axhline(r["f_bar"], color=YELLOW, linewidth=1.8,
                    linestyle="--",
                    label=f"f_bar = {r['f_bar']:.4f}")
         ax.set_xlabel("x_i", color=MUTED, fontsize=9)
-        ax.set_ylabel("f(x_i)", color=MUTED, fontsize=9)
+        ax.set_ylabel("f(x_i)" if r["dim"] == "1D" else "y_i",
+                      color=MUTED, fontsize=9)
         ax.set_title(
-            f"Dispersion  |  f(x) = {r['fexpr']}",
+            f"Dispersion  |  f = {r['fexpr']}",
             color=TEXT, fontsize=10, pad=8)
         ax.legend(facecolor=BG3, edgecolor=BORDER,
                   labelcolor=TEXT, fontsize=9)
