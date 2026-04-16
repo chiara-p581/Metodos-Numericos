@@ -18,7 +18,7 @@ from Lagrange            import LagrangeApp
 from Diferencias_Finitas import DiferenciasFinitasApp
 from integracion         import IntegracionApp
 from montecarlo          import MontecarloApp
-from runge_kutta         import RungeKuttaApp
+from runge_kutta         import ComparadorEDOApp
 
 
 # ══════════════════════════════════════════════════════
@@ -243,7 +243,7 @@ class MetodosNumericos:
         ("Dif. Finitas",     DiferenciasFinitasApp),
         ("Integracion",      IntegracionApp),
         ("Monte Carlo",      MontecarloApp),
-        ("Runge-Kutta",      RungeKuttaApp),
+        ("Runge-Kutta",      ComparadorEDOApp),
     ]
 
     def __init__(self):
