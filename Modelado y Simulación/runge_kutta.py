@@ -74,7 +74,8 @@ def _make_env(x_val=None, y_val=None):
                 "log": math.log, "sqrt": math.sqrt, "pi": math.pi, "e": math.e,
                 "tan": math.tan, "sinh": math.sinh, "cosh": math.cosh,
                 "abs": abs, "ln": math.log})
-    if x_val is not None: env["x"] = x_val
+    if x_val is not None: 
+        env["x"] = x_val
     if y_val is not None: env["y"] = y_val
     return env
 
