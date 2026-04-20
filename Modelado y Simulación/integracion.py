@@ -4,19 +4,9 @@ Integracion Numerica — Reglas de Newton-Cotes
 Referencia: Caceres, O. J. — Fundamentos de Modelado y Simulacion, 2 ed. 2026
             Cap. I — Reglas de Newton-Cotes (pag. 27-35)
 
-Metodos implementados:
-  1. Rectangulo medio   — compuesta
-  2. Trapecio           — simple y compuesta
-  3. Simpson 1/3        — simple y compuesta  (n par)
-  4. Simpson 3/8        — simple y compuesta  (n multiplo de 3)
-
-Pestanas:
-  1. Grafico            — f(x) con rectangulos/trapecios visualizados
-  2. Tabla              — valores f(x_i) en cada nodo
-  3. Paso a paso        — desarrollo estilo cuaderno
-  4. Comparacion        — los 4 metodos lado a lado
-  5. Error              — error de truncamiento teorico y vs solucion analitica
-  6. Analisis
+CORRECCIONES v2:
+  - Indeterminaciones explicadas DENTRO de cada paso a paso por metodo
+  - Error de truncamiento: manejo robusto de NaN/zoo/inf en derivadas
 """
 
 import tkinter as tk
@@ -88,7 +78,6 @@ def f_eval(expr, x_val):
             raise ValueError("indeterminacion")
         return float(val)
     except Exception:
-        # Intentar con limite de sympy (maneja 0/0, sin(x)/x, etc.)
         try:
             f_sym = sp.sympify(expr)
             lim = sp.limit(f_sym, _x, sp.Rational(x_val).limit_denominator(10**9))
@@ -99,31 +88,92 @@ def f_eval(expr, x_val):
         except Exception:
             return 0.0
 
-def f_eval_con_registro(expr, x_val, registro_indet):
+def _tiene_indeterminacion(expr, x_val):
     """
-    Igual que f_eval pero si hay indeterminacion la registra en la lista
-    registro_indet como (x_val, limite_resuelto).
+    Devuelve True si f(x_val) presenta una indeterminacion numerica.
     """
     try:
         val = eval(expr, {"__builtins__": {}}, _env(x_val))
         if val is None or (isinstance(val, float) and (math.isnan(val) or math.isinf(val))):
-            raise ValueError("indeterminacion")
+            return True
+        return False
+    except Exception:
+        return True
+
+def _calcular_limite(expr, x_val):
+    """
+    Calcula lim_{x -> x_val} f(x) usando sympy.
+    Devuelve (valor_float, expresion_sympy_str, pasos_str_list).
+    pasos_str_list contiene las lineas de explicacion del proceso.
+    """
+    try:
+        f_sym     = sp.sympify(expr)
+        x_sym_val = sp.Rational(x_val).limit_denominator(10**9)
+
+        # Intentar sustitucion directa primero para mostrar la forma indeterminada
+        val_directo = f_sym.subs(_x, x_sym_val)
+        forma_indet = str(val_directo)
+
+        # Calcular el limite
+        lim_expr = sp.limit(f_sym, _x, x_sym_val)
+        val_lim  = float(lim_expr.evalf())
+        if math.isnan(val_lim) or math.isinf(val_lim):
+            val_lim = 0.0
+
+        # Construir explicacion paso a paso
+        pasos = []
+        pasos.append(f"Sustitucion directa:  f({x_val}) = {expr}  con  x={x_val}")
+        pasos.append(f"  => resultado directo = {forma_indet}  (INDETERMINADO)")
+        pasos.append(f"Se aplica el calculo de limite:")
+        pasos.append(f"  lim_{{x -> {x_val}}}  {expr}")
+
+        # Intentar mostrar factorizacion / simplificacion si hay cociente
+        try:
+            num, den = sp.fraction(sp.cancel(sp.sympify(expr)))
+            if den != 1:
+                num_en_x0 = num.subs(_x, x_sym_val)
+                den_en_x0 = den.subs(_x, x_sym_val)
+                pasos.append(f"  Numerador evaluado en x={x_val}:    {num_en_x0}  = {float(num_en_x0.evalf()) if num_en_x0.is_number else num_en_x0}")
+                pasos.append(f"  Denominador evaluado en x={x_val}:  {den_en_x0}  = {float(den_en_x0.evalf()) if den_en_x0.is_number else den_en_x0}")
+                pasos.append(f"  => Forma indeterminada  {num_en_x0}/{den_en_x0}")
+
+                # Intentar L'Hopital: derivar num y den
+                dnum = sp.diff(num, _x)
+                dden = sp.diff(den, _x)
+                pasos.append(f"Regla de L'Hopital  =>  d/dx[{num}] / d/dx[{den}]")
+                pasos.append(f"  = ({dnum}) / ({dden})")
+                val_lhopital = sp.limit(dnum / dden, _x, x_sym_val)
+                pasos.append(f"  lim_{{x->{x_val}}}  ({dnum}) / ({dden})  =  {val_lhopital}")
+        except Exception:
+            # No es un cociente simple; mostrar solo el resultado de sympy
+            pasos.append(f"  sympy.limit resuelve la forma indeterminada directamente")
+            pasos.append(f"  (usando series de Taylor / reglas internas de SymPy)")
+
+        pasos.append(f"RESULTADO:  lim_{{x -> {x_val}}}  f(x)  =  {lim_expr}  =  {val_lim:.8f}")
+        return val_lim, str(lim_expr), pasos
+
+    except Exception as exc:
+        return 0.0, "0", [f"No se pudo calcular el limite: {exc}"]
+
+def f_eval_con_registro(expr, x_val, registro_indet):
+    """
+    Igual que f_eval pero si hay indeterminacion la registra en la lista
+    registro_indet como dict con x, lim, lim_sym, pasos.
+    """
+    if _tiene_indeterminacion(expr, x_val):
+        val_lim, lim_sym, pasos = _calcular_limite(expr, x_val)
+        registro_indet.append({
+            "x":       x_val,
+            "lim":     val_lim,
+            "lim_sym": lim_sym,
+            "pasos":   pasos,
+        })
+        return val_lim
+    try:
+        val = eval(expr, {"__builtins__": {}}, _env(x_val))
         return float(val)
     except Exception:
-        try:
-            f_sym = sp.sympify(expr)
-            lim_expr = sp.limit(f_sym, _x, sp.Rational(x_val).limit_denominator(10**9))
-            val_lim = float(lim_expr.evalf())
-            if math.isnan(val_lim) or math.isinf(val_lim):
-                val_lim = 0.0
-            registro_indet.append({
-                "x":       x_val,
-                "lim":     val_lim,
-                "lim_sym": str(lim_expr),
-            })
-            return val_lim
-        except Exception:
-            return 0.0
+        return 0.0
 
 def f_vec(expr, xs):
     return np.array([f_eval(expr, xi) for xi in xs])
@@ -131,40 +181,22 @@ def f_vec(expr, xs):
 
 # ══════════════════════════════════════
 # LOGICA — METODOS DE INTEGRACION
-# Referencia: Caceres pag. 27-35
 # ══════════════════════════════════════
 
-# ── RECTANGULO MEDIO COMPUESTO (Caceres pag. 27) ──────────────────
 def rectangulo_medio(expr, a, b, n):
-    """
-    I = h * sum_{i=1}^{n} f( (x_{i-1} + x_i) / 2 )
-    h = (b-a)/n
-    Ref: Caceres pag. 27
-    """
     h       = (b - a) / n
     medios  = [a + (i - 0.5) * h for i in range(1, n + 1)]
     f_meds  = [f_eval(expr, xi) for xi in medios]
     I       = h * sum(f_meds)
     return I, h, medios, f_meds
 
-# ── TRAPECIO SIMPLE (Caceres pag. 27) ─────────────────────────────
 def trapecio_simple(expr, a, b):
-    """
-    I = (b-a)/2 * [f(a) + f(b)]
-    Ref: Caceres pag. 27
-    """
     fa = f_eval(expr, a)
     fb = f_eval(expr, b)
     I  = (b - a) / 2 * (fa + fb)
     return I, fa, fb
 
-# ── TRAPECIO COMPUESTO (Caceres pag. 28) ──────────────────────────
 def trapecio_compuesto(expr, a, b, n):
-    """
-    I = h/2 * [f(a) + 2*sum_{i=1}^{n-1} f(a+ih) + f(b)]
-    h = (b-a)/n
-    Ref: Caceres pag. 28
-    """
     h    = (b - a) / n
     xs   = [a + i * h for i in range(n + 1)]
     ys   = [f_eval(expr, xi) for xi in xs]
@@ -172,13 +204,7 @@ def trapecio_compuesto(expr, a, b, n):
     I    = (h / 2) * S
     return I, h, xs, ys, S
 
-# ── SIMPSON 1/3 SIMPLE (Caceres pag. 28-29) ───────────────────────
 def simpson13_simple(expr, a, b):
-    """
-    I = h/3 * [f(a) + 4*f((a+b)/2) + f(b)]
-    h = (b-a)/2
-    Ref: Caceres pag. 28
-    """
     h  = (b - a) / 2
     m  = (a + b) / 2
     fa = f_eval(expr, a)
@@ -187,32 +213,19 @@ def simpson13_simple(expr, a, b):
     I  = (h / 3) * (fa + 4 * fm + fb)
     return I, h, m, fa, fm, fb
 
-# ── SIMPSON 1/3 COMPUESTO (Caceres pag. 29) ───────────────────────
 def simpson13_compuesto(expr, a, b, n):
-    """
-    n debe ser par.
-    I = h/3 * [f(a) + 4*sum_impares f(a+ih) + 2*sum_pares f(a+ih) + f(b)]
-    h = (b-a)/n
-    Ref: Caceres pag. 29
-    """
     if n % 2 != 0:
-        n += 1   # forzar par
+        n += 1
     h   = (b - a) / n
     xs  = [a + i * h for i in range(n + 1)]
     ys  = [f_eval(expr, xi) for xi in xs]
-    S_imp = sum(ys[i] for i in range(1, n, 2))   # impares
-    S_par = sum(ys[i] for i in range(2, n - 1, 2))  # pares (excl extremos)
+    S_imp = sum(ys[i] for i in range(1, n, 2))
+    S_par = sum(ys[i] for i in range(2, n - 1, 2))
     S   = ys[0] + 4 * S_imp + 2 * S_par + ys[-1]
     I   = (h / 3) * S
     return I, h, xs, ys, S_imp, S_par, n
 
-# ── SIMPSON 3/8 SIMPLE (Caceres pag. 30) ──────────────────────────
 def simpson38_simple(expr, a, b):
-    """
-    I = 3h/8 * [f(a) + 3*f(x1) + 3*f(x2) + f(b)]
-    h = (b-a)/3
-    Ref: Caceres pag. 30
-    """
     h  = (b - a) / 3
     x1 = a + h
     x2 = a + 2 * h
@@ -223,36 +236,23 @@ def simpson38_simple(expr, a, b):
     I  = (3 * h / 8) * (fa + 3 * f1 + 3 * f2 + fb)
     return I, h, x1, x2, fa, f1, f2, fb
 
-# ── SIMPSON 3/8 COMPUESTO (Caceres pag. 30-31) ────────────────────
 def simpson38_compuesto(expr, a, b, n):
-    """
-    n debe ser multiplo de 3.
-    Ref: Caceres pag. 30
-    """
     while n % 3 != 0:
         n += 1
     h  = (b - a) / n
     xs = [a + i * h for i in range(n + 1)]
     ys = [f_eval(expr, xi) for xi in xs]
-    # indices: multiplos de 3 (internos), resto impares/pares
     S_mult3 = sum(ys[i] for i in range(3, n - 2, 3))
     S_rest  = sum(ys[i] for i in range(1, n) if i % 3 != 0)
     S = ys[0] + 3 * S_rest + 2 * S_mult3 + ys[-1]
     I = (3 * h / 8) * S
     return I, h, xs, ys, n
 
-# ── SOLUCION ANALITICA opcional ───────────────────────────────────
 def integral_analitica(expr, a, b):
-    """
-    Calcula la integral analitica usando sympy.
-    Maneja indeterminaciones en los limites usando limites de sympy.
-    Retorna (valor_float, antiderivada_str, F_en_b_str, F_en_a_str).
-    """
     try:
         f_sym = sp.sympify(expr)
         F     = sp.integrate(f_sym, _x)
 
-        # Evaluar F(b) - F(a) manejando indeterminaciones con limites
         try:
             F_b = float(F.subs(_x, b).evalf())
             if math.isnan(F_b) or math.isinf(F_b):
@@ -268,70 +268,118 @@ def integral_analitica(expr, a, b):
             F_a = float(sp.limit(F, _x, a).evalf())
 
         val = F_b - F_a
-
-        # Simplificar antiderivada para mostrar
         F_pretty = str(sp.simplify(F))
-
         return val, F_pretty, F_b, F_a
     except Exception:
         return None, None, None, None
 
-# ── ERROR DE TRUNCAMIENTO TEORICO ────────────────────────────────
+
+# ══════════════════════════════════════
+# ERROR DE TRUNCAMIENTO — CORREGIDO
+# ══════════════════════════════════════
+def _evaluar_derivada_segura(f_deriv, xs_scan):
+    """
+    Evalua la derivada simbolica en un array de puntos, ignorando
+    puntos que producen NaN, zoo, inf o cualquier excepcion.
+    Retorna (M, xi_max):
+      M      — maximo de |f_deriv(x)| sobre xs_scan  (None si no hay puntos validos)
+      xi_max — valor de x donde se alcanzo ese maximo
+    """
+    best_val = None
+    best_xi  = None
+    for xi in xs_scan:
+        try:
+            v   = f_deriv.subs(_x, xi).evalf()
+            v_f = complex(v)
+            if math.isnan(v_f.real) or math.isinf(v_f.real):
+                continue
+            av = abs(v_f.real)
+            if best_val is None or av > best_val:
+                best_val = av
+                best_xi  = float(xi)
+        except Exception:
+            continue
+    return best_val, best_xi
+
 def error_truncamiento(expr, a, b, n, metodo):
     """
-    Calcula el error de truncamiento teorico usando derivadas numericas.
+    Calcula el error de truncamiento teorico.
+    Retorna (ET, mensaje_error, info) donde info es un dict con:
+      deriv_str  — expresion de la derivada usada
+      M          — maximo |f^(k)(x)| hallado
+      xi_max     — punto donde se alcanzo el maximo
+      orden_k    — orden de la derivada (2 o 4)
+      formula    — string de la formula con numeros sustituidos
     Ref: Caceres pag. 28-31
     """
+    info = {}
     try:
-        f_sym = sp.sympify(expr)
-        h_val = (b - a) / n
+        f_sym   = sp.sympify(expr)
+        xs_scan = np.linspace(a, b, 500)
 
-        if "Trapecio" in metodo:
-            # ET = -(b-a)^3 / (12*n^2) * f''(xi)
-            f2 = sp.diff(f_sym, _x, 2)
-            # max |f''| en [a,b]
-            xs_scan = np.linspace(a, b, 200)
-            M2 = max(abs(float(f2.subs(_x, xi).evalf())) for xi in xs_scan)
-            ET = abs((b - a)**3 / (12 * n**2) * M2)
-            return ET, f"ET = (b-a)^3 / (12*n^2) * max|f''| = {ET:.2e}"
+        if "Trapecio" in metodo or "Rectangulo" in metodo:
+            f_k     = sp.diff(f_sym, _x, 2)
+            orden_k = 2
+        else:
+            f_k     = sp.diff(f_sym, _x, 4)
+            orden_k = 4
 
+        info["orden_k"]   = orden_k
+        info["deriv_str"] = str(sp.simplify(f_k))
+
+        M, xi_max = _evaluar_derivada_segura(f_k, xs_scan)
+
+        if M is None:
+            return None, f"No se pudo evaluar f^({orden_k})(x) en [a,b] (singularidad)", info
+
+        info["M"]      = M
+        info["xi_max"] = xi_max
+
+        if "Rectangulo" in metodo:
+            ET  = abs((b - a)**3 / (24 * n**2) * M)
+            num = abs((b - a)**3)
+            den = 24 * n**2
+            info["formula"] = (
+                f"ET = -(b-a)^3 / (24*n^2) * f''(xi*)          [formula exacta]\n"
+                f"|ET| <= (b-a)^3 / (24*n^2) * max|f''|         [cota]\n"
+                f"     = ({b}-{a})^3 / (24*{n}^2) * {M:.6f}\n"
+                f"     = {num:.6f} / {den} * {M:.6f}"
+            )
+        elif "Trapecio" in metodo:
+            ET  = abs((b - a)**3 / (12 * n**2) * M)
+            num = abs((b - a)**3)
+            den = 12 * n**2
+            info["formula"] = (
+                f"ET = -(b-a)^3 / (12*n^2) * f''(xi*)          [formula exacta]\n"
+                f"|ET| <= (b-a)^3 / (12*n^2) * max|f''|         [cota]\n"
+                f"     = ({b}-{a})^3 / (12*{n}^2) * {M:.6f}\n"
+                f"     = {num:.6f} / {den} * {M:.6f}"
+            )
         elif "1/3" in metodo:
-            # ET = -(b-a)^5 / (180*n^4) * f^(4)(xi)
-            f4 = sp.diff(f_sym, _x, 4)
-            xs_scan = np.linspace(a, b, 200)
-            vals4 = []
-            for xi in xs_scan:
-                try:
-                    vals4.append(abs(float(f4.subs(_x, xi).evalf())))
-                except Exception:
-                    pass
-            M4 = max(vals4) if vals4 else 0
-            ET = abs((b - a)**5 / (180 * n**4) * M4)
-            return ET, f"ET = (b-a)^5 / (180*n^4) * max|f^(4)| = {ET:.2e}"
+            ET  = abs((b - a)**5 / (180 * n**4) * M)
+            num = abs((b - a)**5)
+            den = 180 * n**4
+            info["formula"] = (
+                f"ET = -(b-a)^5 / (180*n^4) * f^(4)(xi*)       [formula exacta]\n"
+                f"|ET| <= (b-a)^5 / (180*n^4) * max|f^(4)|      [cota]\n"
+                f"     = ({b}-{a})^5 / (180*{n}^4) * {M:.6f}\n"
+                f"     = {num:.6f} / {den} * {M:.6f}"
+            )
+        else:  # 3/8
+            ET  = abs((b - a)**5 / 6480 * M)
+            num = abs((b - a)**5)
+            info["formula"] = (
+                f"ET = -(b-a)^5 / 6480 * f^(4)(xi*)            [formula exacta]\n"
+                f"|ET| <= (b-a)^5 / 6480 * max|f^(4)|           [cota]\n"
+                f"     = ({b}-{a})^5 / 6480 * {M:.6f}\n"
+                f"     = {num:.6f} / 6480 * {M:.6f}"
+            )
 
-        elif "3/8" in metodo:
-            # ET = -(b-a)^5 / (6480) * f^(4)(xi)   (simple)
-            f4 = sp.diff(f_sym, _x, 4)
-            xs_scan = np.linspace(a, b, 200)
-            vals4 = []
-            for xi in xs_scan:
-                try:
-                    vals4.append(abs(float(f4.subs(_x, xi).evalf())))
-                except Exception:
-                    pass
-            M4 = max(vals4) if vals4 else 0
-            ET = abs((b - a)**5 / 6480 * M4)
-            return ET, f"ET = (b-a)^5 / 6480 * max|f^(4)| = {ET:.2e}"
+        info["ET"] = ET
+        return ET, None, info
 
-        elif "Rectangulo" in metodo:
-            f2 = sp.diff(f_sym, _x, 2)
-            xs_scan = np.linspace(a, b, 200)
-            M2 = max(abs(float(f2.subs(_x, xi).evalf())) for xi in xs_scan)
-            ET = abs((b - a)**3 / (24 * n**2) * M2)
-            return ET, f"ET = (b-a)^3 / (24*n^2) * max|f''| = {ET:.2e}"
-    except Exception:
-        pass
-    return None, "No se pudo calcular"
+    except Exception as exc:
+        return None, f"Error al calcular: {exc}", info
 
 
 # ══════════════════════════════════════
@@ -441,11 +489,73 @@ def _espacio(parent, h=6):
     tk.Frame(parent, bg=BG2, height=h).pack()
 
 def _c_nodo(parent, i, xi, fxi, peso, color=ACCENT):
-    """Fila de tabla de nodos."""
     row = tk.Frame(parent, bg=BG2)
     row.pack(anchor="w", padx=18, pady=1)
     tk.Label(row, text=f"   i={i}  x_{i}={xi:.6f}  f(x_{i})={fxi:.8f}  peso={peso}",
              bg=BG2, fg=color, font=("Consolas", 11)).pack(side=tk.LEFT)
+
+
+# ══════════════════════════════════════
+# HELPER: BLOQUE DE INDETERMINACION INLINE
+# Muestra el limite detallado para UN punto indeterminado.
+# Se llama desde dentro de cada _pasos_XXXX al evaluar un nodo.
+# ══════════════════════════════════════
+def _c_bloque_limite(parent, expr, x_val, val_lim, pasos, color=ORANGE):
+    """
+    Muestra un sub-bloque dentro de la card de pasos que explica
+    como se resuelve la indeterminacion en x=x_val mediante limite.
+    """
+    # Separador visual suave
+    tk.Frame(parent, bg=ORANGE, height=1).pack(fill=tk.X, padx=20, pady=(6, 2))
+
+    tk.Label(parent,
+             text=f"   ⚠  Indeterminacion en  x = {x_val}  — resolucion por limite",
+             bg=BG2, fg=ORANGE,
+             font=("Consolas", 11, "bold")).pack(anchor="w", padx=18, pady=(2, 0))
+
+    for linea in pasos:
+        # Color segun el contenido de la linea
+        if "RESULTADO" in linea or "lim_sym" in linea:
+            c = GREEN
+        elif "INDETERMINADO" in linea or "indeterminado" in linea:
+            c = RED
+        elif "L'Hopital" in linea or "L'Hopital" in linea:
+            c = YELLOW
+        elif "sympy" in linea or "Taylor" in linea:
+            c = PURPLE
+        else:
+            c = MUTED
+        tk.Label(parent, text=f"      {linea}",
+                 bg=BG2, fg=c,
+                 font=("Consolas", 11),
+                 justify="left", anchor="w").pack(fill=tk.X, padx=18, pady=0)
+
+    _c_resultado_box(parent,
+        f"lim_{{x -> {x_val}}}  f(x)  =  {val_lim:.8f}  (valor usado en el calculo)",
+        ORANGE)
+    tk.Frame(parent, bg=ORANGE, height=1).pack(fill=tk.X, padx=20, pady=(2, 6))
+
+
+def _c_eval_nodo(parent, expr, x_val, color_normal=GREEN):
+    """
+    Evalua f(x_val) y muestra el resultado.
+    Si hay indeterminacion, despliega el bloque de limite completo.
+    Retorna el valor numerico evaluado.
+    """
+    val_lim, lim_sym, pasos = _calcular_limite(expr, x_val)
+
+    if _tiene_indeterminacion(expr, x_val):
+        # Mostrar evaluacion con indeterminacion + limite
+        _c_formula(parent,
+            f"f({x_val})  =  {expr}  con  x = {x_val}",
+            MUTED)
+        _c_bloque_limite(parent, expr, x_val, val_lim, pasos, ORANGE)
+        return val_lim
+    else:
+        # Evaluacion normal
+        val = f_eval(expr, x_val)
+        _c_igual(parent, f"f({x_val})", f"{val:.8f}", color_normal)
+        return val
 
 
 # ══════════════════════════════════════
@@ -497,7 +607,6 @@ class IntegracionApp(tk.Frame):
         sb.pack(side=tk.LEFT, fill=tk.Y)
         sb.pack_propagate(False)
 
-        # ── canvas scrollable ──
         container = tk.Frame(sb, bg=BG2)
         container.pack(fill=tk.BOTH, expand=True)
 
@@ -515,7 +624,6 @@ class IntegracionApp(tk.Frame):
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(window, width=e.width))
 
-        # scroll con rueda SOLO en sidebar
         def _scroll_sidebar(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
@@ -530,7 +638,6 @@ class IntegracionApp(tk.Frame):
         inner.bind("<Enter>",  _bind_scroll)
         inner.bind("<Leave>",  _unbind_scroll)
 
-        # forzar ajuste inicial
         self.after(150, lambda: canvas.configure(scrollregion=canvas.bbox("all")))
 
         inner.configure(padx=14, pady=14)
@@ -549,7 +656,6 @@ class IntegracionApp(tk.Frame):
 
         self._metodo_var = tk.StringVar(value="Trapecio compuesto")
         for m in METODOS:
-            color = COLORES_METODO.get(m, ACCENT)
             tk.Radiobutton(
                 inner, text=m, variable=self._metodo_var, value=m,
                 bg=BG2, fg=TEXT, selectcolor=BG3, activebackground=BG2,
@@ -719,11 +825,8 @@ class IntegracionApp(tk.Frame):
             messagebox.showerror("Error", str(exc))
 
     def _ejecutar_metodo(self, fexpr, a, b, n, metodo):
-        """Ejecuta el metodo seleccionado y devuelve un dict de resultados."""
         r = {"metodo": metodo, "fexpr": fexpr, "a": a, "b": b, "n": n}
 
-        # Lista donde se registran las indeterminaciones encontradas
-        # al evaluar los nodos numericos. Cada entrada: {"x", "lim", "lim_sym"}
         indet = []
 
         if metodo == "Rectangulo medio":
@@ -795,7 +898,7 @@ class IntegracionApp(tk.Frame):
                     pesos.append("3")
             r["nodos"] = [(i, xs[i], ys[i], pesos[i]) for i in range(len(xs))]
 
-        # Guardar indeterminaciones detectadas (sin duplicados por x)
+        # Deduplicar indeterminaciones
         vistas = set()
         indet_uniq = []
         for d in indet:
@@ -805,7 +908,7 @@ class IntegracionApp(tk.Frame):
                 indet_uniq.append(d)
         r["indeterminaciones"] = indet_uniq
 
-        # solucion analitica — por sympy si no se dio manual
+        # Solucion analitica
         analitica_str = self.e_analitica.get().strip()
         if analitica_str:
             try:
@@ -837,7 +940,8 @@ class IntegracionApp(tk.Frame):
 
             x_plot = np.linspace(a - 0.1*(b-a), b + 0.1*(b-a), 500)
             y_plot = [f_eval(fexpr, xi) for xi in x_plot]
-            ax.plot(x_plot, y_plot, color=ACCENT, linewidth=2.5, label=f"f(x) = {fexpr}", zorder=3)
+            ax.plot(x_plot, y_plot, color=ACCENT, linewidth=2.5,
+                    label=f"f(x) = {fexpr}", zorder=3)
 
             color = COLORES_METODO.get(metodo, GREEN)
 
@@ -851,7 +955,7 @@ class IntegracionApp(tk.Frame):
                            color=color, alpha=0.3, edgecolor=color, linewidth=1)
 
             elif "Trapecio" in metodo:
-                if "compuesto" in metodo or "compuesto" in metodo.lower():
+                if "compuesto" in metodo.lower():
                     h   = (b - a) / n
                     xs2 = [a + i * h for i in range(n + 1)]
                     ys2 = [f_eval(fexpr, xi) for xi in xs2]
@@ -869,7 +973,7 @@ class IntegracionApp(tk.Frame):
                     ax.plot([a, a, b, b], [0, fa, fb, 0], color=color, linewidth=1.5)
 
             elif "1/3" in metodo or "3/8" in metodo:
-                if "compuesto" in metodo or "compuesto" in metodo.lower():
+                if "compuesto" in metodo.lower():
                     h   = (b - a) / n
                     xs2 = [a + i * h for i in range(n + 1)]
                     ys2 = [f_eval(fexpr, xi) for xi in xs2]
@@ -902,7 +1006,6 @@ class IntegracionApp(tk.Frame):
             c = _card(si, ACCENT)
             _c_titulo(c, f"Integral de f(x)={fexpr}  en [{a}, {b}]  con n={n}", ACCENT)
 
-            # analitica
             val_anal, F_str, F_b, F_a = integral_analitica(fexpr, a, b)
             if val_anal is not None:
                 _c_igual(c, "Solucion analitica", f"{val_anal:.10f}", GREEN)
@@ -916,7 +1019,6 @@ class IntegracionApp(tk.Frame):
                 except Exception:
                     resultados_comp.append((metodo, None))
 
-            # tabla comparativa
             for metodo, I_val in resultados_comp:
                 col = COLORES_METODO.get(metodo, ACCENT)
                 outer = tk.Frame(c, bg=BG2)
@@ -952,11 +1054,9 @@ class IntegracionApp(tk.Frame):
         h = r.get("h", (r["b"] - r["a"]) / r["n"])
         for nodo in r.get("nodos", []):
             i, xi, fxi, peso = nodo
-            contrib = float(peso) * fxi * h if "Trapecio" not in r["metodo"] or peso != "2" else fxi * 2 * h
             self._tree.insert("", "end", values=(
                 i, f"{xi:.6f}", f"{fxi:.8f}", peso, f"{fxi:.8f}"
             ))
-        # total
         self._tree.insert("", "end", values=(
             "—", "—", "—", "I =", f"{r['I']:.8f}"
         ))
@@ -997,11 +1097,7 @@ class IntegracionApp(tk.Frame):
         elif metodo == "Simpson 3/8 compuesto":
             self._pasos_simpson38_compuesto(si, fexpr, a, b, n, r, color)
 
-        # ── INDETERMINACIONES NUMERICAS (solo si las hubo)
-        if r.get("indeterminaciones"):
-            self._pasos_indeterminaciones(si, fexpr, r["indeterminaciones"])
-
-        # ── RESOLUCION ANALITICA (paso extra, igual para todos los metodos)
+        # ── RESOLUCION ANALITICA
         self._pasos_analitica(si, fexpr, a, b, r)
 
         # ── RESULTADO FINAL
@@ -1019,52 +1115,37 @@ class IntegracionApp(tk.Frame):
                          f"{abs(err/r['I_analitica'])*100:.4f} %", YELLOW)
         _espacio(c)
 
-    # ── PASO INDETERMINACIONES NUMERICAS ─────────────────────────
-    def _pasos_indeterminaciones(self, si, fexpr, indet_list):
+    # ══════════════════════════════════════
+    # HELPER INTERNO: evalua un punto y
+    # muestra limite si hay indeterminacion.
+    # Usado dentro de cada _pasos_XXXX.
+    # ══════════════════════════════════════
+    def _mostrar_eval(self, card, fexpr, x_val, label=None, color_normal=GREEN):
         """
-        Aparece SOLO si se detectaron indeterminaciones al evaluar f(x)
-        en alguno de los nodos numericos. Muestra el limite aplicado para
-        resolver cada punto indeterminado.
+        Muestra la evaluacion de f(x_val) dentro de una card.
+        Si hay indeterminacion despliega el bloque de limite completo.
+        Retorna el valor numerico.
         """
-        _seccion(si, "Indeterminaciones detectadas — resolucion por limite", ORANGE)
-        c = _card(si, ORANGE)
-        _c_titulo(c,
-            "f(x) es indeterminada en los siguientes nodos — se aplica L'Hopital / limite:",
-            ORANGE)
-        _c_formula(c,
-            "Cuando la evaluacion directa genera 0/0, inf/inf u otra forma indeterminada,",
-            MUTED)
-        _c_formula(c,
-            "se calcula  lim_{x -> x0} f(x)  usando sympy para obtener el valor correcto.",
-            MUTED)
-        _espacio(c, 6)
+        lbl = label if label is not None else f"f({x_val})"
 
-        for d in indet_list:
-            x0  = d["x"]
-            val = d["lim"]
-            _c_formula(c, f"Punto:  x0  =  {x0}", ORANGE)
-            _c_formula(c,
-                f"   f({x0}) -> indeterminado por sustitucion directa", RED)
-            _c_formula(c,
-                f"   lim_{{x -> {x0}}}  f(x)  =  lim_{{x -> {x0}}}  {fexpr}",
-                MUTED)
-            _c_resultado_box(c,
-                f"   lim_{{x -> {x0}}}  f(x)  =  {val:.8f}", ORANGE)
-            _espacio(c, 4)
+        if _tiene_indeterminacion(fexpr, x_val):
+            val_lim, lim_sym, pasos = _calcular_limite(fexpr, x_val)
+            _c_formula(card,
+                f"{lbl}  =  {fexpr}  |  x = {x_val}  =>  INDETERMINACION",
+                ORANGE)
+            _c_bloque_limite(card, fexpr, x_val, val_lim, pasos, ORANGE)
+            return val_lim
+        else:
+            val = f_eval(fexpr, x_val)
+            _c_igual(card, lbl, f"{val:.8f}", color_normal)
+            return val
 
-        _espacio(c)
-
-    # ── PASO ANALITICA COMUN PARA TODOS LOS METODOS ───────────────
+    # ── PASO ANALITICA ─────────────────────────────────────────────
     def _pasos_analitica(self, si, fexpr, a, b, r):
-        """
-        Muestra la resolucion analitica exacta en un unico paso.
-        Maneja indeterminaciones usando limites de sympy.
-        """
         _seccion(si, "Resolucion analitica exacta", TEAL)
         c = _card(si, TEAL)
         _c_titulo(c, "Calculo de la integral por antiderivacion:", TEAL)
 
-        # Si ya tenemos la antiderivada calculada (via sympy)
         if r.get("F_antiderivada") is not None:
             F_str = r["F_antiderivada"]
             F_b   = r["F_en_b"]
@@ -1077,24 +1158,20 @@ class IntegracionApp(tk.Frame):
             _c_formula(c, "Aplicando el Teorema Fundamental del Calculo:", MUTED)
             _c_formula(c, f"I  =  F(b) - F(a)  =  F({b}) - F({a})", MUTED)
 
-            # Mostrar si hay indeterminacion en los limites
             try:
                 f_sym = sp.sympify(fexpr)
                 F_sym = sp.integrate(f_sym, _x)
-                # Verificar si la sustitucion directa genera indeterminacion
                 test_b = F_sym.subs(_x, b)
                 test_a = F_sym.subs(_x, a)
                 if str(test_b) in ("nan", "zoo", "oo", "-oo") or \
                    str(test_a) in ("nan", "zoo", "oo", "-oo"):
                     _c_formula(c,
-                        "Indeterminacion detectada — se aplica limite de sympy:",
+                        "Indeterminacion en los limites — se aplica limite de sympy:",
                         YELLOW)
                     _c_formula(c,
-                        f"lim_{{x->{b}}} F(x)  =  {F_b:.8f}  (en lugar de F({b}))",
-                        YELLOW)
+                        f"lim_{{x->{b}}} F(x)  =  {F_b:.8f}", YELLOW)
                     _c_formula(c,
-                        f"lim_{{x->{a}}} F(x)  =  {F_a:.8f}  (en lugar de F({a}))",
-                        YELLOW)
+                        f"lim_{{x->{a}}} F(x)  =  {F_a:.8f}", YELLOW)
                 else:
                     _c_igual(c, f"F({b})", f"{F_b:.8f}", GREEN)
                     _c_igual(c, f"F({a})", f"{F_a:.8f}", GREEN)
@@ -1110,13 +1187,10 @@ class IntegracionApp(tk.Frame):
                 _c_formula(c, "No se pudo calcular la integral analitica.", RED)
 
         elif r.get("I_analitica") is not None:
-            # Valor ingresado manualmente por el usuario
             _c_formula(c, "Valor ingresado manualmente por el usuario:", MUTED)
             _c_resultado_box(c,
                 f"I_analitica  =  {r['I_analitica']:.8f}", TEAL)
-
         else:
-            # Intentar calcular on-the-fly
             try:
                 val, F_str, F_b, F_a = integral_analitica(fexpr, a, b)
                 if val is not None:
@@ -1128,14 +1202,15 @@ class IntegracionApp(tk.Frame):
                 else:
                     _c_formula(c,
                         "No se pudo calcular la integral analitica con sympy.", RED)
-                    _c_formula(c,
-                        "Puedes ingresar el valor exacto en el campo del sidebar.", MUTED)
             except Exception:
                 _c_formula(c, "No se pudo calcular la integral analitica.", RED)
 
         _espacio(c)
 
-    # ── PASO A PASO POR METODO ─────────────────────────────────────
+    # ══════════════════════════════════════
+    # PASOS POR METODO — con limite inline
+    # ══════════════════════════════════════
+
     def _pasos_rectangulo(self, si, fexpr, a, b, n, r, color):
         h = r["h"]
         _seccion(si, "PASO 1 — Formula (Caceres pag. 27)", color)
@@ -1151,16 +1226,19 @@ class IntegracionApp(tk.Frame):
         c = _card(si, color)
         _c_titulo(c, "Para cada subintervalo calculamos el punto medio:", color)
         suma = 0.0
-        for i, (xi, fxi) in enumerate(zip(r["medios"], r["f_meds"])):
-            xl = a + i * h
-            xr = a + (i+1) * h
+        for i in range(len(r["medios"])):
+            xi  = r["medios"][i]
+            fxi = r["f_meds"][i]
+            xl  = a + i * h
+            xr  = a + (i + 1) * h
             _c_formula(c,
-                f"i={i+1}:  x_mid = ({xl:.4f} + {xr:.4f})/2 = {xi:.6f}"
-                f"   f({xi:.4f}) = {fxi:.8f}",
+                f"i={i+1}:  x_mid = ({xl:.4f} + {xr:.4f})/2 = {xi:.6f}",
                 color if i < 3 else MUTED)
+            # Evaluar con deteccion de indeterminacion
+            self._mostrar_eval(c, fexpr, xi,
+                               label=f"   f({xi:.6f})",
+                               color_normal=GREEN)
             suma += fxi
-        if len(r["medios"]) > 3:
-            _c_formula(c, f"   ... ({n} terminos en total)", MUTED)
         _espacio(c)
 
         _seccion(si, "PASO 3 — Aplicar formula", color)
@@ -1177,14 +1255,16 @@ class IntegracionApp(tk.Frame):
 
         _seccion(si, "PASO 2 — Evaluar en los extremos", color)
         c = _card(si, color)
-        _c_igual(c, f"f(a) = f({a})", f"{r['fa']:.8f}", GREEN)
-        _c_igual(c, f"f(b) = f({b})", f"{r['fb']:.8f}", GREEN)
+        self._mostrar_eval(c, fexpr, a, label=f"f(a) = f({a})", color_normal=GREEN)
+        self._mostrar_eval(c, fexpr, b, label=f"f(b) = f({b})", color_normal=GREEN)
         _espacio(c)
 
         _seccion(si, "PASO 3 — Aplicar formula", color)
         c = _card(si, color)
-        _c_formula(c, f"I  =  ({b} - {a}) / 2  *  [{r['fa']:.6f} + {r['fb']:.6f}]")
-        _c_formula(c, f"   =  {(b-a)/2:.6f}  *  {r['fa']+r['fb']:.6f}")
+        fa = r["fa"]
+        fb = r["fb"]
+        _c_formula(c, f"I  =  ({b} - {a}) / 2  *  [{fa:.6f} + {fb:.6f}]")
+        _c_formula(c, f"   =  {(b-a)/2:.6f}  *  {fa+fb:.6f}")
         _c_resultado_box(c, f"I  =  {r['I']:.8f}", color)
 
     def _pasos_trapecio_compuesto(self, si, fexpr, a, b, n, r, color):
@@ -1194,7 +1274,7 @@ class IntegracionApp(tk.Frame):
         _seccion(si, "PASO 1 — Formula (Caceres pag. 28)", color)
         c = _card(si, color)
         _c_titulo(c, "Regla del Trapecio Compuesta:", color)
-        _c_formula(c, "I  =  h/2 * [f(a) + 2*f(x_1) + 2*f(x_2) + ... + 2*f(x_{n-1}) + f(b)]")
+        _c_formula(c, "I  =  h/2 * [f(a) + 2*f(x_1) + ... + 2*f(x_{n-1}) + f(b)]")
         _c_formula(c, "h  =  (b - a) / n")
         _espacio(c)
         _c_igual(c, "h", f"({b} - {a}) / {n}  =  {h:.6f}", color)
@@ -1202,23 +1282,26 @@ class IntegracionApp(tk.Frame):
 
         _seccion(si, "PASO 2 — Evaluar f(x_i) en todos los nodos", color)
         c = _card(si, color)
-        _c_titulo(c, "Tabla de nodos:", color)
+        _c_titulo(c, "Tabla de nodos — evaluacion con deteccion de indeterminaciones:", color)
         for i in range(len(xs)):
-            if i == 0 or i == len(xs)-1:
+            if i == 0 or i == len(xs) - 1:
                 peso_str = "1 (extremo)"
-                col_i = GREEN
+                col_i    = GREEN
             else:
                 peso_str = "2 (interior)"
-                col_i = color
+                col_i    = color
             _c_formula(c,
-                f"x_{i} = {xs[i]:.6f}   f(x_{i}) = {ys[i]:.8f}   peso = {peso_str}",
+                f"─── Nodo i={i}  |  x_{i} = {xs[i]:.6f}  |  peso = {peso_str}",
                 col_i)
+            self._mostrar_eval(c, fexpr, xs[i],
+                               label=f"   f(x_{i}) = f({xs[i]:.6f})",
+                               color_normal=col_i)
         _espacio(c)
 
         _seccion(si, "PASO 3 — Suma ponderada", color)
         c = _card(si, color)
         S = r["S"]
-        _c_formula(c, f"S  =  f(a) + 2*(interior) + f(b)")
+        _c_formula(c, "S  =  f(a)  +  2*(suma interiores)  +  f(b)")
         _c_igual(c, "S", f"{S:.8f}", color)
         _c_formula(c, f"I  =  h/2 * S  =  {h:.6f}/2 * {S:.6f}")
         _c_resultado_box(c, f"I  =  {r['I']:.8f}", color)
@@ -1238,22 +1321,23 @@ class IntegracionApp(tk.Frame):
 
         _seccion(si, "PASO 2 — Evaluar en 3 puntos", color)
         c = _card(si, color)
-        _c_igual(c, f"f(a) = f({a})",   f"{r['fa']:.8f}", GREEN)
-        _c_igual(c, f"f(m) = f({m:.4f})", f"{r['fm']:.8f}", color)
-        _c_igual(c, f"f(b) = f({b})",   f"{r['fb']:.8f}", GREEN)
+        self._mostrar_eval(c, fexpr, a, label=f"f(a) = f({a})",   color_normal=GREEN)
+        self._mostrar_eval(c, fexpr, m, label=f"f(m) = f({m:.6f})", color_normal=color)
+        self._mostrar_eval(c, fexpr, b, label=f"f(b) = f({b})",   color_normal=GREEN)
         _espacio(c)
 
         _seccion(si, "PASO 3 — Aplicar formula", color)
         c = _card(si, color)
-        S = r["fa"] + 4*r["fm"] + r["fb"]
-        _c_formula(c, f"S  =  f(a) + 4*f(m) + f(b)")
-        _c_formula(c, f"   =  {r['fa']:.6f} + 4*{r['fm']:.6f} + {r['fb']:.6f}")
+        fa = r["fa"]; fm = r["fm"]; fb = r["fb"]
+        S = fa + 4*fm + fb
+        _c_formula(c, "S  =  f(a) + 4*f(m) + f(b)")
+        _c_formula(c, f"   =  {fa:.6f} + 4*{fm:.6f} + {fb:.6f}")
         _c_igual(c, "S", f"{S:.6f}", color)
         _c_formula(c, f"I  =  h/3 * S  =  {h:.6f}/3 * {S:.6f}")
         _c_resultado_box(c, f"I  =  {r['I']:.8f}", color)
 
     def _pasos_simpson13_compuesto(self, si, fexpr, a, b, n, r, color):
-        h = r["h"]
+        h  = r["h"]
         xs = r["xs"]
         ys = r["ys"]
         _seccion(si, "PASO 1 — Formula (Caceres pag. 29)", color)
@@ -1266,31 +1350,30 @@ class IntegracionApp(tk.Frame):
         _c_igual(c, "h", f"({b} - {a}) / {r['n']}  =  {h:.6f}", color)
         _espacio(c)
 
-        _seccion(si, "PASO 2 — Clasificar nodos por peso", color)
+        _seccion(si, "PASO 2 — Clasificar y evaluar nodos", color)
         c = _card(si, color)
         sum_imp = 0.0
         sum_par = 0.0
         for i in range(len(xs)):
-            if i == 0 or i == len(xs)-1:
-                etiqueta = "extremo  peso=1"
-                col_i = GREEN
+            if i == 0 or i == len(xs) - 1:
+                etiqueta, col_i = "extremo  peso=1", GREEN
             elif i % 2 == 1:
-                etiqueta = "impar    peso=4"
-                col_i = ORANGE
+                etiqueta, col_i = "impar    peso=4", ORANGE
                 sum_imp += ys[i]
             else:
-                etiqueta = "par      peso=2"
-                col_i = PURPLE
+                etiqueta, col_i = "par      peso=2", PURPLE
                 sum_par += ys[i]
             _c_formula(c,
-                f"x_{i} = {xs[i]:.4f}   f = {ys[i]:.6f}   [{etiqueta}]",
-                col_i)
+                f"─── x_{i} = {xs[i]:.4f}  [{etiqueta}]", col_i)
+            self._mostrar_eval(c, fexpr, xs[i],
+                               label=f"   f(x_{i}) = f({xs[i]:.6f})",
+                               color_normal=col_i)
         _espacio(c)
 
         _seccion(si, "PASO 3 — Sumas parciales y resultado", color)
         c = _card(si, color)
-        _c_igual(c, "sum_impares", f"{sum_imp:.6f}", ORANGE)
-        _c_igual(c, "sum_pares",   f"{sum_par:.6f}", PURPLE)
+        _c_igual(c, "sum_impares (peso 4)", f"{sum_imp:.6f}", ORANGE)
+        _c_igual(c, "sum_pares   (peso 2)", f"{sum_par:.6f}", PURPLE)
         S = ys[0] + 4*sum_imp + 2*sum_par + ys[-1]
         _c_igual(c, "S = f(a) + 4*sum_imp + 2*sum_par + f(b)", f"{S:.6f}", color)
         _c_formula(c, f"I  =  h/3 * S  =  {h:.6f}/3 * {S:.6f}")
@@ -1311,15 +1394,16 @@ class IntegracionApp(tk.Frame):
 
         _seccion(si, "PASO 2 — Evaluar en 4 puntos", color)
         c = _card(si, color)
-        _c_igual(c, f"f(a)  = f({a})",         f"{r['fa']:.8f}", GREEN)
-        _c_igual(c, f"f(x1) = f({r['x1']:.4f})", f"{r['f1']:.8f}", color)
-        _c_igual(c, f"f(x2) = f({r['x2']:.4f})", f"{r['f2']:.8f}", color)
-        _c_igual(c, f"f(b)  = f({b})",         f"{r['fb']:.8f}", GREEN)
+        self._mostrar_eval(c, fexpr, a,       label=f"f(a)  = f({a})",         color_normal=GREEN)
+        self._mostrar_eval(c, fexpr, r["x1"], label=f"f(x1) = f({r['x1']:.6f})", color_normal=color)
+        self._mostrar_eval(c, fexpr, r["x2"], label=f"f(x2) = f({r['x2']:.6f})", color_normal=color)
+        self._mostrar_eval(c, fexpr, b,       label=f"f(b)  = f({b})",         color_normal=GREEN)
         _espacio(c)
 
         _seccion(si, "PASO 3 — Aplicar formula", color)
         c = _card(si, color)
-        S = r["fa"] + 3*r["f1"] + 3*r["f2"] + r["fb"]
+        fa = r["fa"]; f1 = r["f1"]; f2 = r["f2"]; fb = r["fb"]
+        S = fa + 3*f1 + 3*f2 + fb
         _c_formula(c, "S  =  f(a) + 3*f(x1) + 3*f(x2) + f(b)")
         _c_igual(c, "S", f"{S:.6f}", color)
         _c_formula(c, f"I  =  3*h/8 * S  =  3*{h:.6f}/8 * {S:.6f}")
@@ -1338,18 +1422,20 @@ class IntegracionApp(tk.Frame):
         _c_igual(c, "h", f"{h:.6f}", color)
         _espacio(c)
 
-        _seccion(si, "PASO 2 — Clasificar nodos", color)
+        _seccion(si, "PASO 2 — Clasificar y evaluar nodos", color)
         c = _card(si, color)
         for i in range(len(xs)):
-            if i == 0 or i == len(xs)-1:
+            if i == 0 or i == len(xs) - 1:
                 etq, col_i = "peso=1 (extremo)", GREEN
             elif i % 3 == 0:
                 etq, col_i = "peso=2 (mult.3)", PURPLE
             else:
                 etq, col_i = "peso=3", color
             _c_formula(c,
-                f"x_{i} = {xs[i]:.4f}   f = {ys[i]:.6f}   [{etq}]",
-                col_i)
+                f"─── x_{i} = {xs[i]:.4f}  [{etq}]", col_i)
+            self._mostrar_eval(c, fexpr, xs[i],
+                               label=f"   f(x_{i}) = f({xs[i]:.6f})",
+                               color_normal=col_i)
         _espacio(c)
 
         _seccion(si, "PASO 3 — Resultado", color)
@@ -1357,7 +1443,7 @@ class IntegracionApp(tk.Frame):
         _c_resultado_box(c, f"I  =  {r['I']:.8f}", color)
 
     # ══════════════════════════════════════
-    # RENDER: ERROR
+    # RENDER: ERROR — CORREGIDO
     # ══════════════════════════════════════
     def _render_error(self, fexpr, a, b, n, metodo, r):
         si = self._si_err
@@ -1374,35 +1460,78 @@ class IntegracionApp(tk.Frame):
         _c_formula(c, "3. Error relativo  =  |E_abs / I_analitico| * 100%")
         _espacio(c)
 
-        # error de truncamiento teorico
+        # ── Error de truncamiento teorico
         _seccion(si, "Error de truncamiento teorico", YELLOW)
         c = _card(si, YELLOW)
-        ET, ET_str = error_truncamiento(fexpr, a, b, n, metodo)
+        ET, ET_msg, info = error_truncamiento(fexpr, a, b, n, metodo)
         _c_titulo(c, f"Para {metodo}:", YELLOW)
+
+        k = info.get("orden_k", 2)
+        k_label = f"f''(x)"   if k == 2 else f"f^(4)(x)"
+        k_sym   = f"f''(xi)"  if k == 2 else f"f^(4)(xi)"
+
+        # ── sub-bloque 1: formula generica (con signo negativo exacto)
         if "Trapecio" in metodo:
-            _c_formula(c, "ET  =  -(b-a)^3 / (12*n^2)  *  f''(xi)")
-            _c_formula(c, "Ref: Caceres pag. 28")
-        elif "1/3" in metodo:
-            _c_formula(c, "ET  =  -(b-a)^5 / (180*n^4)  *  f^(4)(xi)")
-            _c_formula(c, "Ref: Caceres pag. 29")
-        elif "3/8" in metodo:
-            _c_formula(c, "ET  =  -(b-a)^5 / 6480  *  f^(4)(xi)")
-            _c_formula(c, "Ref: Caceres pag. 30")
+            _c_formula(c, f"ET  =  -(b-a)^3 / (12*n^2)  *  {k_sym}  (exacta)", MUTED)
+            _c_formula(c, f"   =>  |ET|  <=  (b-a)^3 / (12*n^2)  *  max|{k_label}|  en [a,b]", YELLOW)
+            _c_formula(c, "Ref: Caceres pag. 28", MUTED)
         elif "Rectangulo" in metodo:
-            _c_formula(c, "ET  =  -(b-a)^3 / (24*n^2)  *  f''(xi)")
+            _c_formula(c, f"ET  =  -(b-a)^3 / (24*n^2)  *  {k_sym}  (exacta)", MUTED)
+            _c_formula(c, f"   =>  |ET|  <=  (b-a)^3 / (24*n^2)  *  max|{k_label}|  en [a,b]", YELLOW)
+        elif "1/3" in metodo:
+            _c_formula(c, f"ET  =  -(b-a)^5 / (180*n^4)  *  {k_sym}  (exacta)", MUTED)
+            _c_formula(c, f"   =>  |ET|  <=  (b-a)^5 / (180*n^4)  *  max|{k_label}|  en [a,b]", YELLOW)
+            _c_formula(c, "Ref: Caceres pag. 29", MUTED)
+        elif "3/8" in metodo:
+            _c_formula(c, f"ET  =  -(b-a)^5 / 6480  *  {k_sym}  (exacta)", MUTED)
+            _c_formula(c, f"   =>  |ET|  <=  (b-a)^5 / 6480  *  max|{k_label}|  en [a,b]", YELLOW)
+            _c_formula(c, "Ref: Caceres pag. 30", MUTED)
         _espacio(c, 4)
+
         if ET is not None:
-            _c_resultado_box(c, f"ET  <=  {ET:.2e}  =  {ET:.8f}", YELLOW)
+            deriv_str = info.get("deriv_str", "—")
+            M         = info["M"]
+            xi_max    = info["xi_max"]
+
+            # ── sub-bloque 2: derivada simbolica
+            _c_formula(c, f"Paso 1 — Calcular la derivada {k_label}:", TEAL)
+            _c_igual(c, f"{k_label}", deriv_str, TEAL)
+            _espacio(c, 4)
+
+            # ── sub-bloque 3: busqueda del maximo
+            _c_formula(c,
+                f"Paso 2 — Buscar max|{k_label}| barriendo 500 puntos en [{a}, {b}]:",
+                MUTED)
+            _c_formula(c,
+                f"   Se evalua |{k_label}| en cada x_i del intervalo [{a}, {b}]",
+                MUTED)
+            _c_formula(c,
+                f"   El maximo se alcanza en  xi* = {xi_max:.6f}", ORANGE)
+            _c_igual(c,
+                f"|{k_label}| evaluada en xi* = {xi_max:.6f}",
+                f"{M:.8f}", ORANGE)
+            _espacio(c, 4)
+
+            # ── sub-bloque 4: sustitucion numerica completa
+            _c_formula(c, "Paso 3 — Sustituir todos los valores en la formula:", TEAL)
+            for linea in info.get("formula", "").split("\n"):
+                _c_formula(c, linea, MUTED)
+            _espacio(c, 4)
+
+            _c_resultado_box(c,
+                f"ET  <=  {ET:.2e}  =  {ET:.8f}  (con M = {M:.6f} en xi* = {xi_max:.4f})",
+                YELLOW)
         else:
-            _c_formula(c, "No se pudo calcular (derivada no disponible)", RED)
+            _c_formula(c, ET_msg, RED)
+
         _espacio(c)
 
-        # error absoluto con solucion analitica
+        # ── Error absoluto con solucion analitica
         if r.get("I_analitica") is not None:
             _seccion(si, "Error absoluto vs solucion analitica", GREEN)
             c = _card(si, GREEN)
-            I_anal = r["I_analitica"]
-            I_num  = r["I"]
+            I_anal  = r["I_analitica"]
+            I_num   = r["I"]
             err_abs = abs(I_anal - I_num)
             err_rel = abs(err_abs / I_anal * 100) if I_anal != 0 else 0
 
@@ -1418,7 +1547,7 @@ class IntegracionApp(tk.Frame):
             _c_igual(c, "Error relativo", f"{err_rel:.6f} %", YELLOW)
 
             if ET is not None:
-                ok = err_abs <= ET * 1.1
+                ok  = err_abs <= ET * 1.1
                 msg = "OK — |E_abs| <= ET teorico" if ok \
                       else "El error real supera la cota (normal en derivadas de alto orden)"
                 _c_resultado_box(c, msg, GREEN if ok else YELLOW)
@@ -1455,7 +1584,6 @@ class IntegracionApp(tk.Frame):
         w("RESULTADO NUMERICO\n", "title")
         w(f"  I numerica  = "); w(f"{r['I']:.8f}\n\n", "ok")
 
-        # Solucion analitica detallada
         w("SOLUCION ANALITICA\n", "title")
         if r.get("F_antiderivada") is not None:
             w(f"  F(x) = {r['F_antiderivada']}\n", "info")
@@ -1471,10 +1599,10 @@ class IntegracionApp(tk.Frame):
 
         if r.get("I_analitica") is not None:
             w("COMPARACION Y ERROR\n", "title")
-            w(f"  I analitica = "); w(f"{r['I_analitica']:.8f}\n", "info")
             I_anal  = r["I_analitica"]
             I_num   = r["I"]
             err_abs = abs(I_anal - I_num)
+            w(f"  I analitica = "); w(f"{I_anal:.8f}\n", "info")
             w(f"  |E_absoluto| = |{I_anal:.6f} - {I_num:.6f}|\n", "muted")
             w(f"  |E_absoluto| = "); w(f"{err_abs:.2e}\n", "warn")
             if I_anal != 0:
@@ -1492,6 +1620,12 @@ class IntegracionApp(tk.Frame):
         }
         w(f"  {metodo}: {ordenes.get(metodo, 'variable')}\n", "ok")
         w("\n  Orden mas alto = mayor precision con menos subintervalos.\n", "muted")
+
+        # Indeterminaciones encontradas
+        if r.get("indeterminaciones"):
+            w("\nINDETERMINACIONES RESUELTAS POR LIMITE\n", "title")
+            for d in r["indeterminaciones"]:
+                w(f"  x = {d['x']}  =>  lim = {d['lim']:.8f}\n", "warn")
 
         ta.config(state="disabled")
 
