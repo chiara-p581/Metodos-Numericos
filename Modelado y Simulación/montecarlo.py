@@ -656,6 +656,72 @@ def _integral_analitica_1d(fexpr, a, b):
     except Exception:
         return None
 
+
+def _integral_analitica_2d(fexpr, a, b, c_expr, d_expr):
+    """
+    Calcula la integral doble analitica con SymPy.
+    Retorna dict con pasos intermedios, o None si falla.
+
+    Estrategia de Fubini:
+      I = ∫_a^b [ ∫_{c(x)}^{d(x)}  f(x,y) dy ] dx
+
+    Paso 1: primitiva de f respecto a y  →  F_y(x, y)
+    Paso 2: integral interior  →  g(x) = F_y(x, d(x)) - F_y(x, c(x))
+    Paso 3: primitiva de g respecto a x  →  G(x)
+    Paso 4: evaluar  G(b) - G(a)
+    """
+    try:
+        x_sym = sp.Symbol("x")
+        y_sym = sp.Symbol("y")
+
+        fstr  = fexpr.replace("log(", "ln(")
+        f_sym = sp.sympify(fstr)
+
+        # Limites de y: pueden ser expresiones en x o constantes
+        def _parse_lim(expr_str):
+            env = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
+            env["x"] = x_sym; env["pi"] = sp.pi; env["e"] = sp.E
+            try:
+                val = float(expr_str.strip())
+                return sp.Number(val)
+            except Exception:
+                pass
+            return sp.sympify(expr_str.strip(), locals={"x": x_sym})
+
+        c_sym = _parse_lim(c_expr)
+        d_sym = _parse_lim(d_expr)
+
+        # Paso 1: primitiva respecto a y
+        F_y = sp.integrate(f_sym, y_sym)
+
+        # Paso 2: integral interior = F_y evaluada en d(x) - F_y evaluada en c(x)
+        inner_raw = F_y.subs(y_sym, d_sym) - F_y.subs(y_sym, c_sym)
+        inner     = sp.simplify(inner_raw)
+
+        # Paso 3: primitiva respecto a x
+        G_x = sp.integrate(inner, x_sym)
+
+        # Paso 4: evaluar en limites de x
+        val = float((G_x.subs(x_sym, b) - G_x.subs(x_sym, a)).evalf())
+
+        return {
+            "ok":       True,
+            "f_sym":    f_sym,
+            "F_y":      F_y,           # primitiva respecto a y
+            "c_sym":    c_sym,
+            "d_sym":    d_sym,
+            "inner":    inner,          # integral interior simplificada g(x)
+            "inner_raw":inner_raw,      # sin simplificar
+            "G_x":      G_x,           # primitiva respecto a x
+            "a": a, "b": b,
+            "G_b":      float(G_x.subs(x_sym, b).evalf()),
+            "G_a":      float(G_x.subs(x_sym, a).evalf()),
+            "valor":    val,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def _convergencia(fexpr, a, b, n_max, semilla=None, pasos=55):
     rng  = np.random.default_rng(semilla)
     f    = _make_lambdify_1d(fexpr)
@@ -1052,7 +1118,10 @@ class MontecarloApp(tk.Frame):
                 c_expr = self._ec.get().strip()
                 d_expr = self._ed.get().strip()
                 r = montecarlo_2d(fexpr, a, b, c_expr, d_expr, n, nivel, z, semilla)
-                r["I_analitica"] = None
+                # Intento de resolucion analitica 2D (Fubini)
+                ana2d = _integral_analitica_2d(fexpr, a, b, c_expr, d_expr)
+                r["ana2d"]       = ana2d
+                r["I_analitica"] = ana2d["valor"] if (ana2d and ana2d["ok"]) else None
 
             self._r = r
             self._render_resultado(r)
@@ -1285,6 +1354,124 @@ class MontecarloApp(tk.Frame):
             except Exception:
                 _cbox(c_lim, f"I exacta  =  {r['I_analitica']:.8f}", TEAL)
             _gap(c_lim)
+
+        # ── PASO 1b: Calculo analitico 2D (Teorema de Fubini) ──
+        if dim == "2D":
+            ana2d = r.get("ana2d")
+            _seccion(si, "PASO 1b — Calculo analitico 2D (Teorema de Fubini)", GREEN)
+
+            # Intro: que es Fubini
+            c_fub = _card(si, GREEN)
+            _ctitulo(c_fub, "Teorema de Fubini — como resolver integrales dobles", GREEN)
+            _cformula(c_fub,
+                "I = ∫∫ f(x,y) dA  =  ∫_a^b [ ∫_{c(x)}^{d(x)} f(x,y) dy ] dx",
+                ACCENT)
+            _cformula(c_fub,
+                "Estrategia: integrar primero respecto a y (integral interior),",
+                MUTED)
+            _cformula(c_fub,
+                "luego integrar el resultado respecto a x (integral exterior).",
+                MUTED)
+            _cformula(c_fub,
+                f"f(x,y) = {r['fexpr']}", ACCENT)
+            _cformula(c_fub,
+                f"x ∈ [{r['a']:.4g}, {r['b']:.4g}]   "
+                f"y ∈ [{r['c']}, {r['d']}]", MUTED)
+            _gap(c_fub, 4)
+
+            if ana2d and ana2d["ok"]:
+                # ── Sub-paso A: primitiva respecto a y ────
+                _seccion(si, "Sub-paso A — Integral interior: primitiva de f respecto a y", TEAL)
+                _render_integral_card(
+                    si,
+                    integrand_str=str(ana2d["f_sym"]).replace("**", "^"),
+                    var_sym=sp.Symbol("y"),
+                    titulo=f"Calcular  ∫ f(x,y) dy  =  ∫ ({r['fexpr']}) dy   (tratando x como constante)",
+                    borde_color=TEAL,
+                )
+
+                # Evaluacion de la primitiva en los limites de y
+                c_inner = _card(si, PURPLE)
+                _ctitulo(c_inner,
+                    "Sub-paso A2 — Evaluar la primitiva en los limites de y", PURPLE)
+                _cformula(c_inner,
+                    f"F_y(x,y)  =  {ana2d['F_y']}", TEAL)
+                _csep(c_inner)
+                _cformula(c_inner,
+                    "g(x)  =  F_y(x, d(x)) - F_y(x, c(x))", GREEN)
+                _cformula(c_inner,
+                    f"d(x)  =  {ana2d['d_sym']}   →   F_y(x, {ana2d['d_sym']})  =  "
+                    f"{ana2d['F_y'].subs(sp.Symbol('y'), ana2d['d_sym'])}",
+                    MUTED)
+                _cformula(c_inner,
+                    f"c(x)  =  {ana2d['c_sym']}   →   F_y(x, {ana2d['c_sym']})  =  "
+                    f"{ana2d['F_y'].subs(sp.Symbol('y'), ana2d['c_sym'])}",
+                    MUTED)
+                _cformula(c_inner,
+                    f"g(x)  =  {ana2d['inner_raw']}", MUTED)
+                if str(ana2d['inner']) != str(ana2d['inner_raw']):
+                    _cformula(c_inner,
+                        f"g(x) simplificado  =  {ana2d['inner']}", GREEN)
+                else:
+                    _cformula(c_inner, f"g(x)  =  {ana2d['inner']}", GREEN)
+                _gap(c_inner, 4)
+
+                # ── Sub-paso B: integral exterior ─────────
+                _seccion(si, "Sub-paso B — Integral exterior: integrar g(x) respecto a x", ORANGE)
+                _render_integral_card(
+                    si,
+                    integrand_str=str(ana2d["inner"]).replace("**", "^"),
+                    var_sym=sp.Symbol("x"),
+                    titulo=f"Calcular  ∫ g(x) dx  =  ∫ ({ana2d['inner']}) dx",
+                    borde_color=ORANGE,
+                )
+
+                # Evaluacion en limites de x
+                c_outer = _card(si, TEAL)
+                _ctitulo(c_outer,
+                    f"Sub-paso B2 — Evaluar en limites de x: [{r['a']:.4g}, {r['b']:.4g}]",
+                    TEAL)
+                _cformula(c_outer,
+                    f"G(x)  =  {ana2d['G_x']}", TEAL)
+                _cformula(c_outer,
+                    f"I  =  G(b) - G(a)  =  G({r['b']:.4g}) - G({r['a']:.4g})",
+                    MUTED)
+                _cformula(c_outer,
+                    f"I  =  {ana2d['G_b']:.8f} - {ana2d['G_a']:.8f}", MUTED)
+                _cbox(c_outer,
+                      f"I exacta  =  {ana2d['valor']:.8f}", TEAL)
+                _gap(c_outer)
+
+                # Comparacion MC vs exacto
+                err_2d  = abs(r["I_hat"] - ana2d["valor"])
+                pct_2d  = abs(err_2d / ana2d["valor"] * 100) if ana2d["valor"] != 0 else 0.0
+                c_cmp   = _card(si, GREEN)
+                _ctitulo(c_cmp, "Comparacion Montecarlo vs Exacto", GREEN)
+                _cigual(c_cmp, "I exacta  (Fubini)",  f"{ana2d['valor']:.8f}", TEAL)
+                _cigual(c_cmp, "I_hat     (MC)",       f"{r['I_hat']:.8f}",    ACCENT)
+                _cigual(c_cmp, "Error absoluto",       f"{err_2d:.3e}",        YELLOW)
+                _cigual(c_cmp, "Error relativo",       f"{pct_2d:.4f} %",      YELLOW)
+                dentro_2d = r["ic_lo"] <= ana2d["valor"] <= r["ic_hi"]
+                _cbox(c_cmp,
+                      ("✔  Valor exacto DENTRO del IC" if dentro_2d
+                       else "✘  Valor exacto FUERA del IC — aumentar n"),
+                      GREEN if dentro_2d else YELLOW)
+                _gap(c_cmp)
+
+            else:
+                # SymPy no pudo resolver
+                c_err = _card(si, YELLOW)
+                _ctitulo(c_err,
+                    "SymPy no pudo resolver esta integral doble automaticamente",
+                    YELLOW)
+                if ana2d and not ana2d["ok"]:
+                    _cformula(c_err, f"Error: {ana2d.get('error','desconocido')}", MUTED)
+                _cformula(c_err,
+                    "Esto puede ocurrir con funciones muy complejas o limites variables difíciles.",
+                    MUTED)
+                _cformula(c_err,
+                    "El resultado de Montecarlo sigue siendo valido.", GREEN)
+                _gap(c_err, 4)
 
         # ── PASO 2: Generar muestras ───────────────────
         _seccion(si, "PASO 2 — Generar n muestras uniformes aleatorias", PURPLE)
