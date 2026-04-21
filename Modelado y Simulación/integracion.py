@@ -275,7 +275,7 @@ def integral_analitica(expr, a, b):
 
 
 # ══════════════════════════════════════
-# ERROR DE TRUNCAMIENTO — CORREGIDO
+# ERROR DE TRUNCAMIENTO — CORREGIDO v2
 # ══════════════════════════════════════
 def _evaluar_derivada_segura(f_deriv, xs_scan):
     """
@@ -301,15 +301,27 @@ def _evaluar_derivada_segura(f_deriv, xs_scan):
             continue
     return best_val, best_xi
 
-def error_truncamiento(expr, a, b, n, metodo):
+
+def error_truncamiento(expr, a, b, n, metodo, xi_usuario=None):
     """
-    Calcula el error de truncamiento teorico.
-    Retorna (ET, mensaje_error, info) donde info es un dict con:
-      deriv_str  — expresion de la derivada usada
-      M          — maximo |f^(k)(x)| hallado
-      xi_max     — punto donde se alcanzo el maximo
-      orden_k    — orden de la derivada (2 o 4)
-      formula    — string de la formula con numeros sustituidos
+    Calcula el error de truncamiento con las formulas exactas del enunciado.
+
+    Si xi_usuario es None  => usa max|f^(k)| en [a,b] como cota superior.
+    Si xi_usuario es float => evalua la formula exacta con signo en ese punto.
+
+    Formulas exactas (con signo):
+      Trapecio compuesto:     ET = -((b-a)^3 / (12*n^2))  * f''(xi)
+      Simpson 1/3 simple:     ET = -(h^5 / 90)            * f''''(xi)   h=(b-a)/2
+      Simpson 1/3 compuesto:  ET = -((b-a)^5 / (180*n^4)) * f''''(xi)
+      Simpson 3/8 simple:     ET = -((3*h^5) / 80)        * f''''(xi)   h=(b-a)/3
+      Simpson 3/8 compuesto:  ET = -((b-a)^5 / 6480)      * f''''(xi)
+
+    Para Trapecio simple y Rectangulo medio se mantiene la formula original
+    (cota con signo negativo).
+
+    Retorna (ET, mensaje_error, info).
+    info contiene: deriv_str, M, xi_max, orden_k, formula, modo,
+                   val_deriv_con_signo (None si es cota).
     Ref: Caceres pag. 28-31
     """
     info = {}
@@ -317,6 +329,7 @@ def error_truncamiento(expr, a, b, n, metodo):
         f_sym   = sp.sympify(expr)
         xs_scan = np.linspace(a, b, 500)
 
+        # ── Orden de derivada segun metodo ──────────
         if "Trapecio" in metodo or "Rectangulo" in metodo:
             f_k     = sp.diff(f_sym, _x, 2)
             orden_k = 2
@@ -327,52 +340,121 @@ def error_truncamiento(expr, a, b, n, metodo):
         info["orden_k"]   = orden_k
         info["deriv_str"] = str(sp.simplify(f_k))
 
-        M, xi_max = _evaluar_derivada_segura(f_k, xs_scan)
+        # ── Valor de la derivada en xi ───────────────
+        if xi_usuario is not None:
+            # Evaluacion exacta en el punto pedido
+            try:
+                v   = f_k.subs(_x, xi_usuario).evalf()
+                v_f = complex(v)
+                if math.isnan(v_f.real) or math.isinf(v_f.real):
+                    return None, f"Indeterminacion en xi={xi_usuario}", info
+                val_deriv = float(v_f.real)
+            except Exception as e:
+                return None, f"No se pudo evaluar f^({orden_k})({xi_usuario}): {e}", info
+            xi_eval  = xi_usuario
+            M        = abs(val_deriv)
+            info["modo"]               = "exacto"
+            info["M"]                  = M
+            info["xi_max"]             = xi_eval
+            info["val_deriv_con_signo"] = val_deriv
+        else:
+            # Cota: maximo en [a,b]
+            M, xi_max = _evaluar_derivada_segura(f_k, xs_scan)
+            if M is None:
+                return None, f"No se pudo evaluar f^({orden_k})(x) en [a,b]", info
+            xi_eval   = xi_max
+            val_deriv = None   # solo tenemos |M|, no el signo
+            info["modo"]               = "cota"
+            info["M"]                  = M
+            info["xi_max"]             = xi_eval
+            info["val_deriv_con_signo"] = None
 
-        if M is None:
-            return None, f"No se pudo evaluar f^({orden_k})(x) en [a,b] (singularidad)", info
+        # ── Calculo del ET segun la formula del metodo ──
+        h_s13  = (b - a) / 2    # h para Simpson 1/3 simple
+        h_s38  = (b - a) / 3    # h para Simpson 3/8 simple
 
-        info["M"]      = M
-        info["xi_max"] = xi_max
+        if "Trapecio compuesto" in metodo:
+            coef = -((b - a) ** 3) / (12 * n ** 2)
+            ET   = coef * val_deriv if val_deriv is not None else abs(coef) * M
+            deriv_val_str = f"{val_deriv:.8f}" if val_deriv is not None else f"|max| = {M:.8f}"
+            info["formula"] = (
+                f"ET = -((b-a)^3 / (12*n^2)) * f''(xi)\n"
+                f"   = -(({b}-{a})^3 / (12*{n}^2)) * f''({xi_eval:.6f})\n"
+                f"   coeficiente = {coef:.8f}\n"
+                f"   f''({xi_eval:.6f}) = {deriv_val_str}\n"
+                f"   ET = {ET:.8f}"
+            )
 
-        if "Rectangulo" in metodo:
-            ET  = abs((b - a)**3 / (24 * n**2) * M)
-            num = abs((b - a)**3)
-            den = 24 * n**2
+        elif "Simpson 1/3 simple" in metodo:
+            coef = -(h_s13 ** 5) / 90
+            ET   = coef * val_deriv if val_deriv is not None else abs(coef) * M
+            deriv_val_str = f"{val_deriv:.8f}" if val_deriv is not None else f"|max| = {M:.8f}"
             info["formula"] = (
-                f"ET = -(b-a)^3 / (24*n^2) * f''(xi*)          [formula exacta]\n"
-                f"|ET| <= (b-a)^3 / (24*n^2) * max|f''|         [cota]\n"
-                f"     = ({b}-{a})^3 / (24*{n}^2) * {M:.6f}\n"
-                f"     = {num:.6f} / {den} * {M:.6f}"
+                f"ET = -(h^5 / 90) * f''''(xi)          [h = (b-a)/2]\n"
+                f"   h = ({b}-{a})/2 = {h_s13:.6f}\n"
+                f"   = -({h_s13:.6f}^5 / 90) * f''''({xi_eval:.6f})\n"
+                f"   coeficiente = {coef:.8f}\n"
+                f"   f''''({xi_eval:.6f}) = {deriv_val_str}\n"
+                f"   ET = {ET:.8f}"
             )
-        elif "Trapecio" in metodo:
-            ET  = abs((b - a)**3 / (12 * n**2) * M)
-            num = abs((b - a)**3)
-            den = 12 * n**2
+
+        elif "Simpson 1/3 compuesto" in metodo:
+            coef = -((b - a) ** 5) / (180 * n ** 4)
+            ET   = coef * val_deriv if val_deriv is not None else abs(coef) * M
+            deriv_val_str = f"{val_deriv:.8f}" if val_deriv is not None else f"|max| = {M:.8f}"
             info["formula"] = (
-                f"ET = -(b-a)^3 / (12*n^2) * f''(xi*)          [formula exacta]\n"
-                f"|ET| <= (b-a)^3 / (12*n^2) * max|f''|         [cota]\n"
-                f"     = ({b}-{a})^3 / (12*{n}^2) * {M:.6f}\n"
-                f"     = {num:.6f} / {den} * {M:.6f}"
+                f"ET = -((b-a)^5 / (180*n^4)) * f''''(xi)\n"
+                f"   = -(({b}-{a})^5 / (180*{n}^4)) * f''''({xi_eval:.6f})\n"
+                f"   coeficiente = {coef:.8f}\n"
+                f"   f''''({xi_eval:.6f}) = {deriv_val_str}\n"
+                f"   ET = {ET:.8f}"
             )
-        elif "1/3" in metodo:
-            ET  = abs((b - a)**5 / (180 * n**4) * M)
-            num = abs((b - a)**5)
-            den = 180 * n**4
+
+        elif "Simpson 3/8 simple" in metodo:
+            coef = -(3 * h_s38 ** 5) / 80
+            ET   = coef * val_deriv if val_deriv is not None else abs(coef) * M
+            deriv_val_str = f"{val_deriv:.8f}" if val_deriv is not None else f"|max| = {M:.8f}"
             info["formula"] = (
-                f"ET = -(b-a)^5 / (180*n^4) * f^(4)(xi*)       [formula exacta]\n"
-                f"|ET| <= (b-a)^5 / (180*n^4) * max|f^(4)|      [cota]\n"
-                f"     = ({b}-{a})^5 / (180*{n}^4) * {M:.6f}\n"
-                f"     = {num:.6f} / {den} * {M:.6f}"
+                f"ET = -((3*h^5) / 80) * f''''(xi)      [h = (b-a)/3]\n"
+                f"   h = ({b}-{a})/3 = {h_s38:.6f}\n"
+                f"   = -((3*{h_s38:.6f}^5) / 80) * f''''({xi_eval:.6f})\n"
+                f"   coeficiente = {coef:.8f}\n"
+                f"   f''''({xi_eval:.6f}) = {deriv_val_str}\n"
+                f"   ET = {ET:.8f}"
             )
-        else:  # 3/8
-            ET  = abs((b - a)**5 / 6480 * M)
-            num = abs((b - a)**5)
+
+        elif "Simpson 3/8 compuesto" in metodo:
+            coef = -((b - a) ** 5) / 6480
+            ET   = coef * val_deriv if val_deriv is not None else abs(coef) * M
+            deriv_val_str = f"{val_deriv:.8f}" if val_deriv is not None else f"|max| = {M:.8f}"
             info["formula"] = (
-                f"ET = -(b-a)^5 / 6480 * f^(4)(xi*)            [formula exacta]\n"
-                f"|ET| <= (b-a)^5 / 6480 * max|f^(4)|           [cota]\n"
-                f"     = ({b}-{a})^5 / 6480 * {M:.6f}\n"
-                f"     = {num:.6f} / 6480 * {M:.6f}"
+                f"ET = -((b-a)^5 / 6480) * f''''(xi)\n"
+                f"   = -(({b}-{a})^5 / 6480) * f''''({xi_eval:.6f})\n"
+                f"   coeficiente = {coef:.8f}\n"
+                f"   f''''({xi_eval:.6f}) = {deriv_val_str}\n"
+                f"   ET = {ET:.8f}"
+            )
+
+        elif "Trapecio simple" in metodo:
+            coef = -((b - a) ** 3) / 12
+            ET   = coef * val_deriv if val_deriv is not None else abs(coef) * M
+            deriv_val_str = f"{val_deriv:.8f}" if val_deriv is not None else f"|max| = {M:.8f}"
+            info["formula"] = (
+                f"ET = -((b-a)^3 / 12) * f''(xi)\n"
+                f"   coeficiente = {coef:.8f}\n"
+                f"   f''({xi_eval:.6f}) = {deriv_val_str}\n"
+                f"   ET = {ET:.8f}"
+            )
+
+        else:  # Rectangulo medio
+            coef = -((b - a) ** 3) / (24 * n ** 2)
+            ET   = coef * val_deriv if val_deriv is not None else abs(coef) * M
+            deriv_val_str = f"{val_deriv:.8f}" if val_deriv is not None else f"|max| = {M:.8f}"
+            info["formula"] = (
+                f"ET = -((b-a)^3 / (24*n^2)) * f''(xi)\n"
+                f"   coeficiente = {coef:.8f}\n"
+                f"   f''({xi_eval:.6f}) = {deriv_val_str}\n"
+                f"   ET = {ET:.8f}"
             )
 
         info["ET"] = ET
@@ -537,11 +619,6 @@ def _c_bloque_limite(parent, expr, x_val, val_lim, pasos, color=ORANGE):
 
 
 def _c_eval_nodo(parent, expr, x_val, color_normal=GREEN):
-    """
-    Evalua f(x_val) y muestra el resultado.
-    Si hay indeterminacion, despliega el bloque de limite completo.
-    Retorna el valor numerico evaluado.
-    """
     val_lim, lim_sym, pasos = _calcular_limite(expr, x_val)
 
     if _tiene_indeterminacion(expr, x_val):
@@ -669,6 +746,20 @@ class IntegracionApp(tk.Frame):
              font=("Consolas", 9)).pack(anchor="w")
         self.e_analitica = _entry(inner, "")
         self.e_analitica.pack(fill=tk.X, ipady=5, pady=(2, 8))
+
+        # ── NUEVO: xi para el error de truncamiento ──────────────
+        tk.Frame(inner, bg=BORDER, height=1).pack(fill=tk.X, pady=6)
+        _lbl(inner, "ERROR DE TRUNCAMIENTO", fg=YELLOW,
+             font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 2))
+        _lbl(inner, "xi — punto de evaluacion (opcional)", fg=MUTED,
+             font=("Consolas", 10)).pack(anchor="w")
+        _lbl(inner, "Con xi: ET exacto con signo en ese punto",
+             fg=MUTED, font=("Consolas", 9)).pack(anchor="w")
+        _lbl(inner, "Sin xi: cota  |ET| con max|f''| o max|f''''|",
+             fg=MUTED, font=("Consolas", 9)).pack(anchor="w")
+        self.e_xi_error = _entry(inner, "")
+        self.e_xi_error.pack(fill=tk.X, ipady=5, pady=(4, 8))
+        # ─────────────────────────────────────────────────────────
 
         tk.Frame(inner, bg=BORDER, height=1).pack(fill=tk.X, pady=8)
         _btn(inner, "Calcular",     self._calcular).pack(fill=tk.X, pady=3)
@@ -804,6 +895,19 @@ class IntegracionApp(tk.Frame):
         n      = int(ev(self.e_n.get(), "n"))
         metodo = self._metodo_var.get()
         return fexpr, a, b, n, metodo
+
+    # ── NUEVO: parsear xi para error de truncamiento ─────────────
+    def _parse_xi_error(self):
+        """Parsea el campo xi. Retorna float o None si esta vacio."""
+        s = self.e_xi_error.get().strip()
+        if not s:
+            return None
+        env = {k: v for k, v in math.__dict__.items() if not k.startswith("__")}
+        env["pi"] = math.pi; env["e"] = math.e
+        try:
+            return float(eval(s, {"__builtins__": {}}, env))
+        except Exception as exc:
+            raise ValueError(f"xi invalido: {s!r} — {exc}")
 
     # ──────────── CALCULAR ────────────
     def _calcular(self):
@@ -1234,7 +1338,6 @@ class IntegracionApp(tk.Frame):
             _c_formula(c,
                 f"i={i+1}:  x_mid = ({xl:.4f} + {xr:.4f})/2 = {xi:.6f}",
                 color if i < 3 else MUTED)
-            # Evaluar con deteccion de indeterminacion
             self._mostrar_eval(c, fexpr, xi,
                                label=f"   f({xi:.6f})",
                                color_normal=GREEN)
@@ -1443,7 +1546,7 @@ class IntegracionApp(tk.Frame):
         _c_resultado_box(c, f"I  =  {r['I']:.8f}", color)
 
     # ══════════════════════════════════════
-    # RENDER: ERROR — CORREGIDO
+    # RENDER: ERROR — con xi opcional
     # ══════════════════════════════════════
     def _render_error(self, fexpr, a, b, n, metodo, r):
         si = self._si_err
@@ -1451,6 +1554,13 @@ class IntegracionApp(tk.Frame):
             w.destroy()
 
         color = COLORES_METODO.get(metodo, ACCENT)
+
+        # Leer xi del campo
+        try:
+            xi_usuario = self._parse_xi_error()
+        except Exception as exc:
+            xi_usuario = None
+            messagebox.showwarning("xi invalido", str(exc))
 
         _seccion(si, "ANALISIS DE ERROR", RED)
         c = _card(si, RED)
@@ -1463,66 +1573,79 @@ class IntegracionApp(tk.Frame):
         # ── Error de truncamiento teorico
         _seccion(si, "Error de truncamiento teorico", YELLOW)
         c = _card(si, YELLOW)
-        ET, ET_msg, info = error_truncamiento(fexpr, a, b, n, metodo)
+        ET, ET_msg, info = error_truncamiento(fexpr, a, b, n, metodo, xi_usuario)
         _c_titulo(c, f"Para {metodo}:", YELLOW)
 
         k = info.get("orden_k", 2)
-        k_label = f"f''(x)"   if k == 2 else f"f^(4)(x)"
-        k_sym   = f"f''(xi)"  if k == 2 else f"f^(4)(xi)"
+        k_label = "f''(x)"   if k == 2 else "f''''(x)"
 
-        # ── sub-bloque 1: formula generica (con signo negativo exacto)
-        if "Trapecio" in metodo:
-            _c_formula(c, f"ET  =  -(b-a)^3 / (12*n^2)  *  {k_sym}  (exacta)", MUTED)
-            _c_formula(c, f"   =>  |ET|  <=  (b-a)^3 / (12*n^2)  *  max|{k_label}|  en [a,b]", YELLOW)
-            _c_formula(c, "Ref: Caceres pag. 28", MUTED)
+        # Formula generica del metodo
+        if "Trapecio compuesto" in metodo:
+            _c_formula(c, "ET  =  -((b-a)^3 / (12*n^2))  *  f''(xi)", YELLOW)
+        elif "Simpson 1/3 simple" in metodo:
+            _c_formula(c, "ET  =  -(h^5 / 90)  *  f''''(xi)           h = (b-a)/2", YELLOW)
+        elif "Simpson 1/3 compuesto" in metodo:
+            _c_formula(c, "ET  =  -((b-a)^5 / (180*n^4))  *  f''''(xi)", YELLOW)
+        elif "Simpson 3/8 simple" in metodo:
+            _c_formula(c, "ET  =  -((3*h^5) / 80)  *  f''''(xi)       h = (b-a)/3", YELLOW)
+        elif "Simpson 3/8 compuesto" in metodo:
+            _c_formula(c, "ET  =  -((b-a)^5 / 6480)  *  f''''(xi)", YELLOW)
+        elif "Trapecio simple" in metodo:
+            _c_formula(c, "ET  =  -((b-a)^3 / 12)  *  f''(xi)", YELLOW)
         elif "Rectangulo" in metodo:
-            _c_formula(c, f"ET  =  -(b-a)^3 / (24*n^2)  *  {k_sym}  (exacta)", MUTED)
-            _c_formula(c, f"   =>  |ET|  <=  (b-a)^3 / (24*n^2)  *  max|{k_label}|  en [a,b]", YELLOW)
-        elif "1/3" in metodo:
-            _c_formula(c, f"ET  =  -(b-a)^5 / (180*n^4)  *  {k_sym}  (exacta)", MUTED)
-            _c_formula(c, f"   =>  |ET|  <=  (b-a)^5 / (180*n^4)  *  max|{k_label}|  en [a,b]", YELLOW)
-            _c_formula(c, "Ref: Caceres pag. 29", MUTED)
-        elif "3/8" in metodo:
-            _c_formula(c, f"ET  =  -(b-a)^5 / 6480  *  {k_sym}  (exacta)", MUTED)
-            _c_formula(c, f"   =>  |ET|  <=  (b-a)^5 / 6480  *  max|{k_label}|  en [a,b]", YELLOW)
-            _c_formula(c, "Ref: Caceres pag. 30", MUTED)
+            _c_formula(c, "ET  =  -((b-a)^3 / (24*n^2))  *  f''(xi)", YELLOW)
+
+        # Modo de calculo
+        if xi_usuario is not None:
+            _c_formula(c,
+                f"Modo: EXACTO — xi = {xi_usuario}  (ingresado por el usuario)",
+                TEAL)
+        else:
+            _c_formula(c,
+                "Modo: COTA — se usa max|" + k_label + "| en [a,b]",
+                ORANGE)
+            _c_formula(c,
+                "Para ET exacto con signo, ingresa xi en el campo del sidebar.",
+                MUTED)
         _espacio(c, 4)
 
         if ET is not None:
             deriv_str = info.get("deriv_str", "—")
             M         = info["M"]
-            xi_max    = info["xi_max"]
+            xi_eval   = info["xi_max"]
 
-            # ── sub-bloque 2: derivada simbolica
-            _c_formula(c, f"Paso 1 — Calcular la derivada {k_label}:", TEAL)
-            _c_igual(c, f"{k_label}", deriv_str, TEAL)
+            # Paso 1: derivada simbolica
+            _c_formula(c, f"Paso 1 — {k_label} (derivada simbolica):", TEAL)
+            _c_igual(c, k_label, deriv_str, TEAL)
             _espacio(c, 4)
 
-            # ── sub-bloque 3: busqueda del maximo
-            _c_formula(c,
-                f"Paso 2 — Buscar max|{k_label}| barriendo 500 puntos en [{a}, {b}]:",
-                MUTED)
-            _c_formula(c,
-                f"   Se evalua |{k_label}| en cada x_i del intervalo [{a}, {b}]",
-                MUTED)
-            _c_formula(c,
-                f"   El maximo se alcanza en  xi* = {xi_max:.6f}", ORANGE)
-            _c_igual(c,
-                f"|{k_label}| evaluada en xi* = {xi_max:.6f}",
-                f"{M:.8f}", ORANGE)
+            # Paso 2: valor en xi
+            _c_formula(c, f"Paso 2 — Valor en xi = {xi_eval:.6f}:", TEAL)
+            val_d = info.get("val_deriv_con_signo")
+            if val_d is not None:
+                _c_igual(c, f"{k_label} en xi={xi_eval:.6f}", f"{val_d:.8f}", GREEN)
+            else:
+                _c_igual(c, f"max|{k_label}| en [{a},{b}]  (xi*={xi_eval:.6f})",
+                         f"{M:.8f}", ORANGE)
             _espacio(c, 4)
 
-            # ── sub-bloque 4: sustitucion numerica completa
-            _c_formula(c, "Paso 3 — Sustituir todos los valores en la formula:", TEAL)
+            # Paso 3: sustitucion completa
+            _c_formula(c, "Paso 3 — Sustitucion en la formula:", TEAL)
             for linea in info.get("formula", "").split("\n"):
-                _c_formula(c, linea, MUTED)
+                if linea.strip():
+                    _c_formula(c, linea, MUTED)
             _espacio(c, 4)
 
-            _c_resultado_box(c,
-                f"ET  <=  {ET:.2e}  =  {ET:.8f}  (con M = {M:.6f} en xi* = {xi_max:.4f})",
-                YELLOW)
+            if xi_usuario is not None:
+                _c_resultado_box(c,
+                    f"ET  =  {ET:.8f}   (exacto en xi = {xi_eval:.6f})",
+                    YELLOW)
+            else:
+                _c_resultado_box(c,
+                    f"|ET|  <=  {abs(ET):.8f}   (cota, max en xi* = {xi_eval:.4f})",
+                    YELLOW)
         else:
-            _c_formula(c, ET_msg, RED)
+            _c_formula(c, ET_msg or "No se pudo calcular.", RED)
 
         _espacio(c)
 
@@ -1547,8 +1670,8 @@ class IntegracionApp(tk.Frame):
             _c_igual(c, "Error relativo", f"{err_rel:.6f} %", YELLOW)
 
             if ET is not None:
-                ok  = err_abs <= ET * 1.1
-                msg = "OK — |E_abs| <= ET teorico" if ok \
+                ok  = err_abs <= abs(ET) * 1.1
+                msg = "OK — |E_abs| <= |ET| teorico" if ok \
                       else "El error real supera la cota (normal en derivadas de alto orden)"
                 _c_resultado_box(c, msg, GREEN if ok else YELLOW)
             _espacio(c)
@@ -1608,6 +1731,42 @@ class IntegracionApp(tk.Frame):
             if I_anal != 0:
                 w(f"  Error rel    = "); w(f"{abs(err_abs/I_anal)*100:.4f} %\n\n", "warn")
 
+        # ── Error de truncamiento en analisis ──
+        w("ERROR DE TRUNCAMIENTO\n", "title")
+        try:
+            xi_usuario = self._parse_xi_error()
+        except Exception:
+            xi_usuario = None
+
+        ET, ET_msg, info = error_truncamiento(fexpr, a, b, n, metodo, xi_usuario)
+
+        formulas_et = {
+            "Trapecio compuesto":    "ET = -((b-a)^3/(12*n^2)) * f''(xi)",
+            "Simpson 1/3 simple":    "ET = -(h^5/90) * f''''(xi)   h=(b-a)/2",
+            "Simpson 1/3 compuesto": "ET = -((b-a)^5/(180*n^4)) * f''''(xi)",
+            "Simpson 3/8 simple":    "ET = -((3*h^5)/80) * f''''(xi)   h=(b-a)/3",
+            "Simpson 3/8 compuesto": "ET = -((b-a)^5/6480) * f''''(xi)",
+            "Trapecio simple":       "ET = -((b-a)^3/12) * f''(xi)",
+            "Rectangulo medio":      "ET = -((b-a)^3/(24*n^2)) * f''(xi)",
+        }
+        w(f"  Formula: {formulas_et.get(metodo, 'ver tab Error')}\n", "info")
+
+        if ET is not None:
+            k       = info.get("orden_k", 2)
+            k_label = "f''" if k == 2 else "f''''"
+            w(f"  {k_label}(x) = {info.get('deriv_str', '—')}\n", "muted")
+            val_d = info.get("val_deriv_con_signo")
+            xi_ev = info["xi_max"]
+            if val_d is not None:
+                w(f"  {k_label}({xi_ev:.6f}) = {val_d:.8f}  [xi exacto]\n", "muted")
+                w(f"  ET (exacto en xi={xi_ev:.4f}) = "); w(f"{ET:.8f}\n", "warn")
+            else:
+                w(f"  max|{k_label}| = {info['M']:.8f}  en xi* = {xi_ev:.6f}\n", "muted")
+                w(f"  |ET| <= "); w(f"{abs(ET):.8f}  (cota superior)\n", "warn")
+        else:
+            w(f"  {ET_msg or 'No disponible'}\n", "red")
+
+        w("\n")
         w("ORDEN DE APROXIMACION\n", "title")
         ordenes = {
             "Rectangulo medio":      "O(h^2)  — orden 2",
